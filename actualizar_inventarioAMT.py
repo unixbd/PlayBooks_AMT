@@ -100,12 +100,17 @@ def actualizar_repo():
 def subir_cambios_repo(archivos, mensaje="Actualizacion automatica del inventario AMT"):
     """
     Actualiza el repositorio Git:
-    - Agrega archivos al staging area.
+    - Agrega archivos existentes al staging area.
     - Si hay cambios, hace commit, pull --rebase y push.
     - Si no hay cambios, informa y termina.
     """
     try:
-        subprocess.run(["git", "add"] + archivos, check=True)
+        archivos_existentes = [a for a in archivos if os.path.exists(a)]
+        if not archivos_existentes:
+            print("No se encontraron archivos para agregar al commit.")
+            return
+
+        subprocess.run(["git", "add"] + archivos_existentes, check=True)
 
         status_check = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -326,24 +331,30 @@ if __name__ == '__main__':
         actualizar_repo()
 
     # 2. Descargar inventario JSON desde Power Automate
+    json_path = "inventario_amt.json"
+    descarga_exitosa = False
+
     if refresh_inv:
         try:
-            generate_inventario_json(URL_DEFAULT, HEADERS_DEFAULT, filename="inventario_amt.json")
+            descarga_exitosa = generate_inventario_json(URL_DEFAULT, HEADERS_DEFAULT, filename=json_path)
         except Exception as e:
-            print(f"Aviso: {e}")
+            print(f"\nAviso: {e}")
 
-    # 3. Cargar JSON descargado (o muestra local de respaldo)
-    json_path = "inventario_amt.json"
+    # Si no se pudo descargar y el archivo no existe, finalizar limpiamente sin tocar Git
+    if not os.path.exists(json_path):
+        print(f"\n[ALERTA] No se pudo descargar '{json_path}' desde Power Automate.")
+        print("El servicio upstream de Power Automate devolvió error 502 (NoResponse).")
+        print("Esto indica que el origen de datos interno (middleware / base de datos / gateway) no está respondiendo en este momento.")
+        print("El script finaliza sin alterar el repositorio Git.")
+        exit(1)
+
+    # 3. Cargar JSON descargado
     try:
         inventario_raw = cargar_json_raw(json_path)
         print(f"JSON '{json_path}' cargado OK.")
     except Exception as e:
-        print(f"Error cargando {json_path}: {e}. Intentando sample_amt_inventory.json...")
-        try:
-            inventario_raw = cargar_json_raw("sample_amt_inventory.json")
-        except Exception as ex2:
-            print(f"Error fatal: {ex2}")
-            exit(1)
+        print(f"Error fatal cargando {json_path}: {e}")
+        exit(1)
 
     servidores = extraer_lista_servidores(inventario_raw)
     print(f"Total registros detectados: {len(servidores)}")
@@ -351,7 +362,9 @@ if __name__ == '__main__':
     # 4. Generar archivo de inventario .ini para AWX
     guardar_inventario_amt_ini(servidores, filename="INVENTARIO_AMT.ini")
 
-    # 5. Sincronizar y subir cambios al repositorio Git
-    archivos = ["inventario_amt.json", "INVENTARIO_AMT.ini"]
-    if use_git:
+    # 5. Sincronizar y subir cambios al repositorio Git solo si se descargó data nueva
+    archivos = [json_path, "INVENTARIO_AMT.ini"]
+    if use_git and descarga_exitosa:
         subir_cambios_repo(archivos)
+    elif not descarga_exitosa:
+        print("\nNo se subieron cambios a Git debido a que la descarga no fue exitosa.")

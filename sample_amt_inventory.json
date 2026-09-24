@@ -1,0 +1,26 @@
+[
+    {
+        "hostname": "servidor-linux-01",
+        "ip": "192.168.1.10",
+        "so": "RedHat Enterprise Linux 8.10",
+        "ambiente": "Produccion"
+    },
+    {
+        "hostname": "servidor-linux-02",
+        "ip": "192.168.1.11",
+        "so": "Oracle Linux 7.9",
+        "ambiente": "Produccion"
+    },
+    {
+        "hostname": "servidor-win-01",
+        "ip": "192.168.1.20",
+        "so": "Windows Server 2019",
+        "ambiente": "Produccion"
+    },
+    {
+        "hostname": "servidor-win-02",
+        "ip": "192.168.1.21",
+        "so": "Windows Server 2022",
+        "ambiente": "Produccion"
+    }
+]

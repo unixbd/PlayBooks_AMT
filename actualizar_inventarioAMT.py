@@ -44,10 +44,10 @@ POLL_INTERVAL = 5
 def limpiar_cliente(cliente):
     if not cliente:
         return "Sin_Cliente"
-    cliente = unicodedata.normalize('NFKD', cliente).encode('ASCII', 'ignore').decode('ASCII')
-    cliente = cliente.replace('-', '_')
-    cliente = re.sub(r'[^\w]', '', cliente)
-    return cliente
+    cliente = unicodedata.normalize('NFKD', str(cliente)).encode('ASCII', 'ignore').decode('ASCII')
+    cliente = cliente.strip().replace(' ', '_').replace('-', '_')
+    cliente = re.sub(r'[^\w_]', '', cliente)
+    return cliente or "Sin_Cliente"
 
 
 def limpiar_hostname(hostname):
@@ -218,9 +218,9 @@ def extraer_lista_servidores(data: Any) -> list:
     return []
 
 
-def clasificar_so(item: dict) -> Tuple[str, str, bool]:
+def clasificar_so(item: dict) -> Tuple[str, str, str, bool]:
     """
-    Retorna (hostname, ip, is_windows) a partir del item del JSON de AMT SharePoint.
+    Retorna (cliente, hostname, ip, is_windows) a partir del item del JSON de AMT SharePoint.
     Descarta equipos marcados como INACTIVO.
     """
     norm = {str(k).lower().strip(): _sp_value(v) for k, v in item.items()}
@@ -228,7 +228,16 @@ def clasificar_so(item: dict) -> Tuple[str, str, bool]:
     # Estado: si está explícitamente inactivo, descartar
     for st_key in ["field_18", "estado", "status", "state"]:
         if st_key in norm and norm[st_key].upper() == "INACTIVO":
-            return ("Sin_Hostname", "Sin_IP", False)
+            return ("Sin_Cliente", "Sin_Hostname", "Sin_IP", False)
+
+    # Cliente (field_0 es el campo en SharePoint AMT)
+    cliente = "Sin_Cliente"
+    for k in ["field_0", "cliente", "client", "customer", "empresa"]:
+        if k in norm and norm[k]:
+            candidato_cli = limpiar_cliente(norm[k])
+            if candidato_cli != "Sin_Cliente":
+                cliente = candidato_cli
+                break
 
     # Hostname (field_3 es el campo principal en SharePoint AMT, field_4 es código/alias)
     hostname = None
@@ -271,16 +280,17 @@ def clasificar_so(item: dict) -> Tuple[str, str, bool]:
         if hostname and ("win" in hostname.lower()):
             is_windows = True
 
-    return (hostname or "Sin_Hostname", ip or "Sin_IP", is_windows)
+    return (cliente, hostname or "Sin_Hostname", ip or "Sin_IP", is_windows)
 
 
 def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
     """
-    Genera el archivo .ini para AWX con los grupos requeridos:
-    [linux_servers]
-    [windows_servers]
-    [windows_servers:vars]
+    Genera el archivo .ini para AWX con:
+    1. Grupos por cada Cliente ([PREVISORA], [PCCAS], [EL_TIEMPO], etc.)
+    2. Grupos globales de SO ([linux_servers], [windows_servers])
+    3. Variables WinRM para Windows ([windows_servers:vars])
     """
+    clientes_dict = defaultdict(list)
     linux_list = []
     windows_list = []
     omitidos = 0
@@ -288,7 +298,7 @@ def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
     for item in servidores:
         if not isinstance(item, dict):
             continue
-        hostname, ip, is_windows = clasificar_so(item)
+        cliente, hostname, ip, is_windows = clasificar_so(item)
 
         if hostname == "Sin_Hostname":
             omitidos += 1
@@ -298,21 +308,39 @@ def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
         if ip and ip != "Sin_IP":
             line += f" ansible_host={ip}"
 
+        clientes_dict[cliente].append(line)
+
         if is_windows:
-            windows_list.append(line)
+            windows_list.append(hostname)
         else:
-            linux_list.append(line)
+            linux_list.append(hostname)
 
     linux_list = sorted(set(linux_list))
     windows_list = sorted(set(windows_list))
+    total_servidores = len(linux_list) + len(windows_list)
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write("# ==============================================================================\n")
-        f.write("# Inventario AMT generado automáticamente para AWX / Ansible\n")
+        f.write("# Inventario AMT generado automáticamente para AWX / Ansible (Por Clientes)\n")
         f.write(f"# Fecha: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"# Total: {len(linux_list) + len(windows_list)} (Linux: {len(linux_list)}, Windows: {len(windows_list)})\n")
+        f.write(f"# Total: {total_servidores} servidores (Linux: {len(linux_list)}, Windows: {len(windows_list)}) en {len(clientes_dict)} Clientes\n")
         f.write("# ==============================================================================\n\n")
 
+        # 1. Secciones por cada Cliente
+        f.write("# ==============================================================================\n")
+        f.write("# 1. GRUPOS POR CLIENTE\n")
+        f.write("# ==============================================================================\n\n")
+        for cli in sorted(clientes_dict.keys()):
+            hosts_cli = sorted(set(clientes_dict[cli]))
+            f.write(f"[{cli}]\n")
+            for h in hosts_cli:
+                f.write(f"{h}\n")
+            f.write("\n")
+
+        # 2. Grupos por Sistema Operativo
+        f.write("# ==============================================================================\n")
+        f.write("# 2. GRUPOS POR SISTEMA OPERATIVO\n")
+        f.write("# ==============================================================================\n\n")
         f.write("[linux_servers]\n")
         if linux_list:
             for h in linux_list:
@@ -329,13 +357,16 @@ def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
             f.write("# (Sin servidores Windows registrados)\n")
         f.write("\n")
 
-        f.write("# Solo se declaran parámetros de transporte, nada de contraseñas ni llaves\n")
+        # 3. Variables de conexión Windows (WinRM)
+        f.write("# ==============================================================================\n")
+        f.write("# 3. VARIABLES DE TRANSPORTE WINDOWS (WinRM)\n")
+        f.write("# ==============================================================================\n")
         f.write("[windows_servers:vars]\n")
         f.write("ansible_connection=winrm\n")
         f.write("ansible_winrm_server_cert_validation=ignore\n")
         f.write("ansible_winrm_transport=ntlm   # o kerberos / credssp\n")
 
-    print(f"Proceso {filename}. Linux: {len(linux_list)}, Windows: {len(windows_list)}, Omitidos: {omitidos}")
+    print(f"Proceso {filename}. Total: {total_servidores} servidores en {len(clientes_dict)} clientes. Omitidos: {omitidos}")
 
 
 if __name__ == '__main__':

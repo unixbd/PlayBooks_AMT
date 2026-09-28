@@ -337,6 +337,13 @@ def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
     windows_list = sorted(windows_set)
     total_unicos = len(linux_list) + len(windows_list)
 
+    # Mapa global de IP por cod_serv
+    host_ip_map = {}
+    for cli in clientes_dict:
+        for cod, info in clientes_dict[cli].items():
+            if info["ip"] and info["ip"] != "Sin_IP":
+                host_ip_map[cod] = info["ip"]
+
     with open(filename, "w", encoding="utf-8") as f:
         f.write("# ==============================================================================\n")
         f.write("# Inventario AMT generado automáticamente para AWX / Ansible\n")
@@ -366,7 +373,9 @@ def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
         f.write("[linux_servers]\n")
         if linux_list:
             for cod in linux_list:
-                f.write(f"{cod}\n")
+                ip = host_ip_map.get(cod, "")
+                line = cod + (f" ansible_host={ip}" if ip and ip != "Sin_IP" else "")
+                f.write(f"{line}\n")
         else:
             f.write("# (Sin servidores Linux registrados)\n")
         f.write("\n")
@@ -374,7 +383,9 @@ def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
         f.write("[windows_servers]\n")
         if windows_list:
             for cod in windows_list:
-                f.write(f"{cod}\n")
+                ip = host_ip_map.get(cod, "")
+                line = cod + (f" ansible_host={ip}" if ip and ip != "Sin_IP" else "")
+                f.write(f"{line}\n")
         else:
             f.write("# (Sin servidores Windows registrados)\n")
         f.write("\n")
@@ -388,7 +399,8 @@ def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
         f.write("ansible_winrm_server_cert_validation=ignore\n")
         f.write("ansible_winrm_transport=ntlm   # o kerberos / credssp\n")
 
-    print(f"Proceso {filename}. Total: {total_unicos} servidores COD-SERV únicos en {len(clientes_dict)} clientes. Omitidos: {omitidos}")
+    print(f"Archivo '{filename}' escrito exitosamente.")
+    print(f"Total: {total_unicos} servidores COD-SERV únicos en {len(clientes_dict)} clientes. Omitidos: {omitidos}")
 
 
 if __name__ == '__main__':
@@ -429,11 +441,10 @@ if __name__ == '__main__':
     print(f"Total registros detectados: {len(servidores)}")
 
     # 4. Generar archivo de inventario .ini para AWX
-    guardar_inventario_amt_ini(servidores, filename="INVENTARIO_AMT.ini")
+    ini_path = "INVENTARIO_AMT.ini"
+    guardar_inventario_amt_ini(servidores, filename=ini_path)
 
-    # 5. Sincronizar y subir cambios al repositorio Git solo si se descargó data nueva
-    archivos = [json_path, "INVENTARIO_AMT.ini"]
-    if use_git and descarga_exitosa:
+    # 5. Sincronizar y subir cambios al repositorio Git
+    archivos = [json_path, ini_path]
+    if use_git:
         subir_cambios_repo(archivos)
-    elif not descarga_exitosa:
-        print("\nNo se subieron cambios a Git debido a que la descarga no fue exitosa.")

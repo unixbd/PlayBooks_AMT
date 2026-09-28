@@ -11,6 +11,7 @@ y sincroniza los cambios automáticamente con el repositorio Git.
 ===============================================================================
 """
 
+import os
 import requests
 import time
 import json
@@ -160,20 +161,26 @@ def generate_inventario_json(url, headers, filename="inventario_amt.json", max_r
                     time.sleep(wait_initial)
 
                     start_poll = time.time()
+                    consecutive_502 = 0
                     while (time.time() - start_poll) < POLL_TIMEOUT:
                         try:
-                            status_resp = requests.get(location_url, headers=headers, timeout=30)
+                            status_resp = requests.get(location_url, headers={'Accept': 'application/json'}, timeout=30)
                             if status_resp.status_code == 200:
                                 with open(filename, "wb") as f:
                                     f.write(status_resp.content)
                                 print(f"Archivo JSON descargado exitosamente como '{filename}'.")
                                 return True
                             elif status_resp.status_code == 202:
+                                consecutive_502 = 0
                                 print(f"Flujo en ejecucion (202). Esperando {POLL_INTERVAL}s...")
                                 time.sleep(POLL_INTERVAL)
                             elif status_resp.status_code == 502:
-                                print("Upstream server respondio 502 Bad Gateway. Reintentando flujo completo...")
-                                break
+                                consecutive_502 += 1
+                                print(f"Upstream server respondio 502 Bad Gateway (intento {consecutive_502}/5).")
+                                if consecutive_502 >= 5:
+                                    print("Demasiados 502 en polling. Reiniciando flujo completo...")
+                                    break
+                                time.sleep(5)
                             else:
                                 print(f"Respuesta inesperada en location: {status_resp.status_code}")
                                 break
@@ -213,24 +220,33 @@ def extraer_lista_servidores(data: Any) -> list:
 
 def clasificar_so(item: dict) -> Tuple[str, str, bool]:
     """
-    Retorna (hostname, ip, is_windows) a partir del item del JSON.
+    Retorna (hostname, ip, is_windows) a partir del item del JSON de AMT SharePoint.
+    Descarta equipos marcados como INACTIVO.
     """
-    # Mapeo flexible
     norm = {str(k).lower().strip(): _sp_value(v) for k, v in item.items()}
 
-    # Hostname
-    hostname = None
-    for k in ["cod_hostname", "hostname", "host", "nombre", "server", "servidor", "name", "computername", "equipo"]:
-        if k in norm and norm[k]:
-            hostname = limpiar_hostname(norm[k])
-            break
+    # Estado: si está explícitamente inactivo, descartar
+    for st_key in ["field_18", "estado", "status", "state"]:
+        if st_key in norm and norm[st_key].upper() == "INACTIVO":
+            return ("Sin_Hostname", "Sin_IP", False)
 
-    # IP
-    ip = None
-    for k in ["ip_x002d_mgmt", "ip", "ip_address", "ipaddress", "ansible_host", "direccion_ip", "host_ip"]:
+    # Hostname (field_3 es el campo principal en SharePoint AMT, field_4 es código/alias)
+    hostname = None
+    for k in ["field_3", "cod_hostname", "hostname", "host", "nombre", "server", "servidor", "field_4", "name", "computername", "equipo"]:
         if k in norm and norm[k]:
-            ip = obtener_primera_ip(norm[k])
-            break
+            candidato = limpiar_hostname(norm[k])
+            if candidato and candidato != "Sin_Hostname":
+                hostname = candidato
+                break
+
+    # IP (field_5 es la principal, field_7 y field_6 son alternas)
+    ip = None
+    for k in ["field_5", "field_7", "field_6", "ip_x002d_mgmt", "ip", "ip_address", "ipaddress", "ansible_host", "direccion_ip", "host_ip"]:
+        if k in norm and norm[k]:
+            candidata = obtener_primera_ip(norm[k])
+            if candidata != "Sin_IP":
+                ip = candidata
+                break
 
     if not hostname and ip:
         hostname = ip
@@ -239,9 +255,9 @@ def clasificar_so(item: dict) -> Tuple[str, str, bool]:
         if ip_candidata != "Sin_IP":
             ip = ip_candidata
 
-    # SO
+    # SO: TIPO_SO (UNIX / WINDOWS)
     so_val = ""
-    for k in ["so", "os", "sistema_operativo", "operating_system", "tipo", "platform", "tipo_so"]:
+    for k in ["tipo_so", "so", "os", "sistema_operativo", "operating_system", "tipo", "platform"]:
         if k in norm and norm[k]:
             so_val = norm[k].lower()
             break

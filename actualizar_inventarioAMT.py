@@ -50,6 +50,12 @@ def limpiar_cliente(cliente):
     return cliente or "Sin_Cliente"
 
 
+def limpiar_cod_serv(cod):
+    if not cod:
+        return ""
+    return str(cod).strip().replace(' ', '').replace('\n', '').replace('\r', '')
+
+
 def limpiar_hostname(hostname):
     if not hostname:
         return "Sin_Hostname"
@@ -218,9 +224,9 @@ def extraer_lista_servidores(data: Any) -> list:
     return []
 
 
-def clasificar_so(item: dict) -> Tuple[str, str, str, bool]:
+def clasificar_so(item: dict) -> Tuple[str, str, str, str, bool]:
     """
-    Retorna (cliente, hostname, ip, is_windows) a partir del item del JSON de AMT SharePoint.
+    Retorna (cliente, cod_serv, hostname, ip, is_windows) a partir del item del JSON de AMT SharePoint.
     Descarta equipos marcados como INACTIVO.
     """
     norm = {str(k).lower().strip(): _sp_value(v) for k, v in item.items()}
@@ -228,7 +234,7 @@ def clasificar_so(item: dict) -> Tuple[str, str, str, bool]:
     # Estado: si está explícitamente inactivo, descartar
     for st_key in ["field_18", "estado", "status", "state"]:
         if st_key in norm and norm[st_key].upper() == "INACTIVO":
-            return ("Sin_Cliente", "Sin_Hostname", "Sin_IP", False)
+            return ("Sin_Cliente", "Sin_CodServ", "Sin_Hostname", "Sin_IP", False)
 
     # Cliente (field_0 es el campo en SharePoint AMT)
     cliente = "Sin_Cliente"
@@ -239,14 +245,27 @@ def clasificar_so(item: dict) -> Tuple[str, str, str, bool]:
                 cliente = candidato_cli
                 break
 
-    # Hostname (field_3 es el campo principal en SharePoint AMT, field_4 es código/alias)
-    hostname = None
-    for k in ["field_3", "cod_hostname", "hostname", "host", "nombre", "server", "servidor", "field_4", "name", "computername", "equipo"]:
+    # COD-SERV (field_4 es el campo de código de servidor en SharePoint AMT)
+    cod_serv = None
+    for k in ["field_4", "cod_serv", "cod_servidor", "codigo_servidor", "codigo", "cod"]:
         if k in norm and norm[k]:
-            candidato = limpiar_hostname(norm[k])
-            if candidato and candidato != "Sin_Hostname":
-                hostname = candidato
+            candidato_cod = limpiar_cod_serv(norm[k])
+            if candidato_cod:
+                cod_serv = candidato_cod
                 break
+
+    # Hostname (field_3 es el nombre de servidor en SharePoint AMT)
+    hostname = None
+    for k in ["field_3", "cod_hostname", "hostname", "host", "nombre", "server", "servidor", "name", "computername", "equipo"]:
+        if k in norm and norm[k]:
+            candidato_host = limpiar_hostname(norm[k])
+            if candidato_host and candidato_host != "Sin_Hostname":
+                hostname = candidato_host
+                break
+
+    # Fallback si no tiene cod_serv pero sí hostname
+    if not cod_serv and hostname:
+        cod_serv = hostname
 
     # IP (field_5 es la principal, field_7 y field_6 son alternas)
     ip = None
@@ -256,13 +275,6 @@ def clasificar_so(item: dict) -> Tuple[str, str, str, bool]:
             if candidata != "Sin_IP":
                 ip = candidata
                 break
-
-    if not hostname and ip:
-        hostname = ip
-    if hostname and not ip:
-        ip_candidata = obtener_primera_ip(hostname)
-        if ip_candidata != "Sin_IP":
-            ip = ip_candidata
 
     # SO: TIPO_SO (UNIX / WINDOWS)
     so_val = ""
@@ -277,82 +289,92 @@ def clasificar_so(item: dict) -> Tuple[str, str, str, bool]:
     elif any(term in so_val for term in ["linux", "redhat", "rhel", "centos", "unix", "ubuntu", "suse", "aix", "solaris"]):
         is_windows = False
     else:
-        if hostname and ("win" in hostname.lower()):
+        if (hostname and "win" in hostname.lower()) or (cod_serv and "win" in cod_serv.lower()):
             is_windows = True
 
-    return (cliente, hostname or "Sin_Hostname", ip or "Sin_IP", is_windows)
+    return (cliente, cod_serv or "Sin_CodServ", hostname or "Sin_Hostname", ip or "Sin_IP", is_windows)
 
 
 def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
     """
     Genera el archivo .ini para AWX con:
-    1. Grupos por cada Cliente ([PREVISORA], [PCCAS], [EL_TIEMPO], etc.)
-    2. Grupos globales de SO ([linux_servers], [windows_servers])
+    1. Registro único de COD-SERV por cada Cliente ([PREVISORA], [PCCAS], etc.)
+    2. Grupos globales de SO ([linux_servers], [windows_servers]) con COD-SERV únicos
     3. Variables WinRM para Windows ([windows_servers:vars])
     """
-    clientes_dict = defaultdict(list)
-    linux_list = []
-    windows_list = []
+    # Mapeo: cliente -> dict(cod_serv -> info) para garantizar unicidad por cliente
+    clientes_dict = defaultdict(dict)
+    linux_set = set()
+    windows_set = set()
     omitidos = 0
 
     for item in servidores:
         if not isinstance(item, dict):
             continue
-        cliente, hostname, ip, is_windows = clasificar_so(item)
+        cliente, cod_serv, hostname, ip, is_windows = clasificar_so(item)
 
-        if hostname == "Sin_Hostname":
+        if cod_serv == "Sin_CodServ":
             omitidos += 1
             continue
 
-        line = hostname
-        if ip and ip != "Sin_IP":
-            line += f" ansible_host={ip}"
-
-        clientes_dict[cliente].append(line)
+        if cod_serv not in clientes_dict[cliente]:
+            clientes_dict[cliente][cod_serv] = {
+                "ip": ip,
+                "hostname": hostname,
+                "is_windows": is_windows
+            }
+        else:
+            # Si no tenía IP válida y este registro sí la tiene, la actualizamos
+            if clientes_dict[cliente][cod_serv]["ip"] == "Sin_IP" and ip != "Sin_IP":
+                clientes_dict[cliente][cod_serv]["ip"] = ip
 
         if is_windows:
-            windows_list.append(hostname)
+            windows_set.add(cod_serv)
         else:
-            linux_list.append(hostname)
+            linux_set.add(cod_serv)
 
-    linux_list = sorted(set(linux_list))
-    windows_list = sorted(set(windows_list))
-    total_servidores = len(linux_list) + len(windows_list)
+    linux_list = sorted(linux_set)
+    windows_list = sorted(windows_set)
+    total_unicos = len(linux_list) + len(windows_list)
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write("# ==============================================================================\n")
-        f.write("# Inventario AMT generado automáticamente para AWX / Ansible (Por Clientes)\n")
+        f.write("# Inventario AMT generado automáticamente para AWX / Ansible\n")
+        f.write("# Identificador principal: COD-SERV (Registro único por servidor)\n")
         f.write(f"# Fecha: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"# Total: {total_servidores} servidores (Linux: {len(linux_list)}, Windows: {len(windows_list)}) en {len(clientes_dict)} Clientes\n")
+        f.write(f"# Total: {total_unicos} servidores únicos (Linux: {len(linux_list)}, Windows: {len(windows_list)}) en {len(clientes_dict)} Clientes\n")
         f.write("# ==============================================================================\n\n")
 
-        # 1. Secciones por cada Cliente
+        # 1. Secciones por cada Cliente (con COD-SERV único)
         f.write("# ==============================================================================\n")
-        f.write("# 1. GRUPOS POR CLIENTE\n")
+        f.write("# 1. GRUPOS POR CLIENTE (COD-SERV único)\n")
         f.write("# ==============================================================================\n\n")
         for cli in sorted(clientes_dict.keys()):
-            hosts_cli = sorted(set(clientes_dict[cli]))
             f.write(f"[{cli}]\n")
-            for h in hosts_cli:
-                f.write(f"{h}\n")
+            for cod in sorted(clientes_dict[cli].keys()):
+                ip = clientes_dict[cli][cod]["ip"]
+                line = cod
+                if ip and ip != "Sin_IP":
+                    line += f" ansible_host={ip}"
+                f.write(f"{line}\n")
             f.write("\n")
 
         # 2. Grupos por Sistema Operativo
         f.write("# ==============================================================================\n")
-        f.write("# 2. GRUPOS POR SISTEMA OPERATIVO\n")
+        f.write("# 2. GRUPOS POR SISTEMA OPERATIVO (COD-SERV único)\n")
         f.write("# ==============================================================================\n\n")
         f.write("[linux_servers]\n")
         if linux_list:
-            for h in linux_list:
-                f.write(f"{h}\n")
+            for cod in linux_list:
+                f.write(f"{cod}\n")
         else:
             f.write("# (Sin servidores Linux registrados)\n")
         f.write("\n")
 
         f.write("[windows_servers]\n")
         if windows_list:
-            for h in windows_list:
-                f.write(f"{h}\n")
+            for cod in windows_list:
+                f.write(f"{cod}\n")
         else:
             f.write("# (Sin servidores Windows registrados)\n")
         f.write("\n")
@@ -366,7 +388,7 @@ def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
         f.write("ansible_winrm_server_cert_validation=ignore\n")
         f.write("ansible_winrm_transport=ntlm   # o kerberos / credssp\n")
 
-    print(f"Proceso {filename}. Total: {total_servidores} servidores en {len(clientes_dict)} clientes. Omitidos: {omitidos}")
+    print(f"Proceso {filename}. Total: {total_unicos} servidores COD-SERV únicos en {len(clientes_dict)} clientes. Omitidos: {omitidos}")
 
 
 if __name__ == '__main__':

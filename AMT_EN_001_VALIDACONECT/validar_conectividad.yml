@@ -1,10 +1,11 @@
 ---
 # ==============================================================================
 # Playbook: Validación de Conectividad General AMT (Linux y Windows)
+# Proyecto: AMT_EN_001_VALIDACONECT
 # ==============================================================================
 # - Prueba ping SSH en servidores Linux
 # - Prueba win_ping WinRM en servidores Windows
-# - Resumen de alcance y estado por servidor
+# - Diagnóstico y reporte de alcance por cada servidor
 # ==============================================================================
 
 - name: "TEST 1 - Validación de Conectividad SSH (Servidores Linux)"

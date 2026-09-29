@@ -1,0 +1,45 @@
+---
+# ==============================================================================
+# Playbook: Validación de Conectividad General AMT (Linux y Windows)
+# ==============================================================================
+# - Prueba ping SSH en servidores Linux
+# - Prueba win_ping WinRM en servidores Windows
+# - Resumen de alcance y estado por servidor
+# ==============================================================================
+
+- name: "TEST 1 - Validación de Conectividad SSH (Servidores Linux)"
+  hosts: linux_servers
+  gather_facts: false
+  ignore_unreachable: true
+  tasks:
+    - name: "Probar conectividad SSH (Ping)"
+      ansible.builtin.ping:
+      register: ping_linux_result
+
+    - name: "Diagnóstico de conexión Linux"
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'EXITOSO: ' ~ inventory_hostname ~ ' (' ~ ansible_host | default('Sin IP') ~ ') respondio correctamente.'
+            if (ping_linux_result is defined and ping_linux_result.ping is defined and ping_linux_result.ping == 'pong')
+            else 'FALLIDO / INALCANZABLE: ' ~ inventory_hostname ~ ' (' ~ ansible_host | default('Sin IP') ~ ') - ' ~ (ping_linux_result.msg | default('Error desconocido'))
+          }}
+
+
+- name: "TEST 2 - Validación de Conectividad WinRM (Servidores Windows)"
+  hosts: windows_servers
+  gather_facts: false
+  ignore_unreachable: true
+  tasks:
+    - name: "Probar conectividad WinRM (Win Ping)"
+      ansible.windows.win_ping:
+      register: ping_win_result
+
+    - name: "Diagnóstico de conexión Windows"
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'EXITOSO: ' ~ inventory_hostname ~ ' (' ~ ansible_host | default('Sin IP') ~ ') respondio correctamente via WinRM.'
+            if (ping_win_result is defined and ping_win_result.ping is defined and ping_win_result.ping == 'pong')
+            else 'FALLIDO / INALCANZABLE: ' ~ inventory_hostname ~ ' (' ~ ansible_host | default('Sin IP') ~ ') - ' ~ (ping_win_result.msg | default('Error desconocido'))
+          }}

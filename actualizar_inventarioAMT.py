@@ -267,9 +267,9 @@ def clasificar_so(item: dict) -> Tuple[str, str, str, str, bool]:
     if not cod_serv and hostname:
         cod_serv = hostname
 
-    # IP (field_5 es la principal, field_7 y field_6 son alternas)
+    # IP (field_7 es IP-GESTION, field_6 es respaldo/alterna, field_5 es IP-PRODUCCION)
     ip = None
-    for k in ["field_5", "field_7", "field_6", "ip_x002d_mgmt", "ip", "ip_address", "ipaddress", "ansible_host", "direccion_ip", "host_ip"]:
+    for k in ["field_7", "ip_gestion", "ip_mgmt", "ip_x002d_mgmt", "field_6", "field_5", "ip", "ip_address", "ipaddress", "ansible_host", "direccion_ip", "host_ip"]:
         if k in norm and norm[k]:
             candidata = obtener_primera_ip(norm[k])
             if candidata != "Sin_IP":

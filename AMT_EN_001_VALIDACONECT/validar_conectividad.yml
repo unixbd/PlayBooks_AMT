@@ -3,27 +3,34 @@
 # Playbook: Validación de Conectividad General AMT (Linux y Windows)
 # Proyecto: AMT_EN_001_VALIDACONECT
 # ==============================================================================
-# - Prueba ping SSH en servidores Linux
-# - Prueba win_ping WinRM en servidores Windows
-# - Diagnóstico y reporte de alcance por cada servidor
-# ==============================================================================
 
 - name: "TEST 1 - Validación de Conectividad SSH (Servidores Linux)"
   hosts: linux_servers
   gather_facts: false
   ignore_unreachable: true
+  vars:
+    ansible_connection: ssh
+    ansible_user: "{{ linux_user_override | default('autounix') }}"
+    ansible_password: "{{ linux_pass_override | default(ansible_password | default(omit)) }}"
+    ansible_ssh_pass: "{{ linux_pass_override | default(ansible_password | default(omit)) }}"
+    ansible_ssh_common_args: >-
+      -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null
+      -o PubkeyAuthentication=no
+      -o PreferredAuthentications=password,keyboard-interactive
   tasks:
     - name: "Probar conectividad SSH (Ping)"
       ansible.builtin.ping:
       register: ping_linux_result
+      ignore_errors: true
 
     - name: "Diagnóstico de conexión Linux"
       ansible.builtin.debug:
         msg: >-
           {{
-            'EXITOSO: ' ~ inventory_hostname ~ ' (' ~ ansible_host | default('Sin IP') ~ ') respondio correctamente.'
+            'EXITOSO: ' ~ inventory_hostname ~ ' (' ~ (ansible_host | default('Sin IP')) ~ ') respondio correctamente.'
             if (ping_linux_result is defined and ping_linux_result.ping is defined and ping_linux_result.ping == 'pong')
-            else 'FALLIDO / INALCANZABLE: ' ~ inventory_hostname ~ ' (' ~ ansible_host | default('Sin IP') ~ ') - ' ~ (ping_linux_result.msg | default('Error desconocido'))
+            else 'FALLIDO / INALCANZABLE: ' ~ inventory_hostname ~ ' (' ~ (ansible_host | default('Sin IP')) ~ ') - ' ~ (ping_linux_result.msg | default('Error desconocido'))
           }}
 
 
@@ -31,16 +38,21 @@
   hosts: windows_servers
   gather_facts: false
   ignore_unreachable: true
+  vars:
+    ansible_connection: winrm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_winrm_transport: ntlm
   tasks:
     - name: "Probar conectividad WinRM (Win Ping)"
       ansible.windows.win_ping:
       register: ping_win_result
+      ignore_errors: true
 
     - name: "Diagnóstico de conexión Windows"
       ansible.builtin.debug:
         msg: >-
           {{
-            'EXITOSO: ' ~ inventory_hostname ~ ' (' ~ ansible_host | default('Sin IP') ~ ') respondio correctamente via WinRM.'
+            'EXITOSO: ' ~ inventory_hostname ~ ' (' ~ (ansible_host | default('Sin IP')) ~ ') respondio correctamente via WinRM.'
             if (ping_win_result is defined and ping_win_result.ping is defined and ping_win_result.ping == 'pong')
-            else 'FALLIDO / INALCANZABLE: ' ~ inventory_hostname ~ ' (' ~ ansible_host | default('Sin IP') ~ ') - ' ~ (ping_win_result.msg | default('Error desconocido'))
+            else 'FALLIDO / INALCANZABLE: ' ~ inventory_hostname ~ ' (' ~ (ansible_host | default('Sin IP')) ~ ') - ' ~ (ping_win_result.msg | default('Error desconocido'))
           }}

@@ -1,0 +1,60 @@
+<!-- Header (tabla, compatible con Outlook) -->
+{# === Normalizador seguro de fecha y hora (sin to_datetime) === #}
+{% set fecha_ddmmyyyy = 'N/D' %}
+{% set hora_raw = '00:00:00' %}
+
+{% if ansible_date_time is defined %}
+  {# FECHA: intenta YYYY-MM-DD -> DD-MM-YYYY, si no, usa ISO[:10] #}
+  {% if ansible_date_time.date is defined and '-' in ansible_date_time.date %}
+    {% set _fp = ansible_date_time.date.split('-') %}
+    {% if _fp|length == 3 %}{% set fecha_ddmmyyyy = _fp[2] ~ '-' ~ _fp[1] ~ '-' ~ _fp[0] %}{% endif %}
+  {% elif ansible_date_time.iso8601 is defined %}
+    {% set _iso = ansible_date_time.iso8601 | string %}
+    {% if _iso|length >= 10 and '-' in _iso[:10] %}
+      {% set _fp = _iso[:10].split('-') %}
+      {% if _fp|length == 3 %}{% set fecha_ddmmyyyy = _fp[2] ~ '-' ~ _fp[1] ~ '-' ~ _fp[0] %}{% endif %}
+    {% endif %}
+  {% endif %}
+
+  {# HORA: usa .time cruda; si no hay, extrae de ISO después de 'T' #}
+  {% if ansible_date_time.time is defined %}
+    {% set hora_raw = (ansible_date_time.time | string) %}
+  {% elif ansible_date_time.iso8601 is defined %}
+    {% set _iso = ansible_date_time.iso8601 | string %}
+    {% if 'T' in _iso %}
+      {% set _tp = _iso.split('T') %}
+      {% if _tp|length > 1 %}{% set hora_raw = _tp[1] %}{% endif %}
+    {% endif %}
+  {% endif %}
+
+  {# Limpieza de hora: quita Z, zona, fracciones #}
+  {% set hora_raw = hora_raw.replace('Z','') %}
+  {% if '+' in hora_raw %}{% set hora_raw = hora_raw.split('+')[0] %}{% endif %}
+  {% if '-' in hora_raw and hora_raw.count(':') < 2 and hora_raw|length > 8 %}{% set hora_raw = hora_raw.split('-')[0] %}{% endif %}
+  {% if '.' in hora_raw %}{% set hora_raw = hora_raw.split('.')[0] %}{% endif %}
+{% endif %}
+
+<tr>
+  <td style="padding:0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#da291c;">
+      <tr>
+        <!-- Columna izquierda -->
+        <td class="stack mso-font" valign="top"
+            style="padding:20px 24px; color:#ffffff; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; width:70%;">
+          <h1 style="margin:0; font-size:20px; font-weight:700; line-height:1.3;">{{ titulo_reporte }}</h1>
+          <p style="margin:0 0 2px 0;"><strong>{{ actividad }}</strong></p>
+          <p style="margin:6px 0 0; font-size:12px; opacity:0.95; line-height:1.5; color:#f3f4f6;">
+            {{ subtitulo_reporte | default('Informe generado desde AWX / AMT') }}
+          </p>
+        </td>
+        <!-- Columna derecha -->
+        <td class="stack right mso-font" valign="top" align="right"
+            style="padding:20px 24px; color:#ffffff; font-size:12px; line-height:1.5; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; width:30%;">
+          <p style="margin:0 0 2px 0;"><strong>JOB ID:</strong> {{ awx_job_id | default(tower_job_id) | default('N/D') }}</p>
+          <p style="margin:0;"><small>{{ fecha_ddmmyyyy }}</small></p>
+          <p style="margin:0;"><small>{{ hora_raw }}</small></p>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>

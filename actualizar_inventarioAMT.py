@@ -439,6 +439,8 @@ def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
         f.write("# ==============================================================================\n")
         f.write("[windows_servers:vars]\n")
         f.write("ansible_connection=winrm\n")
+        f.write("ansible_port=5985\n")
+        f.write("ansible_winrm_scheme=http\n")
         f.write("ansible_winrm_server_cert_validation=ignore\n")
         f.write("ansible_winrm_transport=ntlm   # o kerberos / credssp\n")
 

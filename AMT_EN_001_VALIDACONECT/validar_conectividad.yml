@@ -91,8 +91,17 @@
             connect_timeout: "{{ conn_connect_timeout }}"
           vars:
             ansible_connection: winrm
+            ansible_port: "{{ winrm_port | default(5985) }}"
+            ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
             ansible_winrm_server_cert_validation: ignore
             ansible_winrm_transport: "{{ winrm_transport | default('ntlm') }}"
+          environment:
+            http_proxy: ""
+            https_proxy: ""
+            no_proxy: "*"
+            HTTP_PROXY: ""
+            HTTPS_PROXY: ""
+            NO_PROXY: "*"
           timeout: 45
           register: conn_win_result
 

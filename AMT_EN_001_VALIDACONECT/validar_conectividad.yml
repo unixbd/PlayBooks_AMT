@@ -9,13 +9,6 @@
   hosts: "{{ target_hosts | default('all') }}"
   gather_facts: no
   ignore_unreachable: true
-  environment:
-    HTTP_PROXY: ""
-    HTTPS_PROXY: ""
-    http_proxy: ""
-    https_proxy: ""
-    NO_PROXY: "*"
-    no_proxy: "*"
   vars:
     # Configuración de Servidor de Correo (Sobrescribible via Extra Vars en AWX)
     email_host: "{{ email_smtp_host | default('172.22.88.6') }}"

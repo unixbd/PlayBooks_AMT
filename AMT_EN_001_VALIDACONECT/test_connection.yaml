@@ -68,9 +68,7 @@
         # Validación para Servidores Linux (SSH)
         - name: Validar conectividad SSH (Linux)
           when: tipo_so == 'Linux'
-          wait_for_connection:
-            timeout: "{{ conn_timeout }}"
-            connect_timeout: "{{ conn_connect_timeout }}"
+          ansible.builtin.ping:
           vars:
             ansible_connection: ssh
             ansible_user: "{{ linux_user_override | default(omit) }}"
@@ -86,22 +84,14 @@
         # Validación para Servidores Windows (WinRM)
         - name: Validar conectividad WinRM (Windows)
           when: tipo_so == 'Windows'
-          wait_for_connection:
-            timeout: "{{ conn_timeout }}"
-            connect_timeout: "{{ conn_connect_timeout }}"
+          ansible.windows.win_ping:
           vars:
             ansible_connection: winrm
             ansible_port: "{{ winrm_port | default(5985) }}"
             ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
             ansible_winrm_server_cert_validation: ignore
             ansible_winrm_transport: "{{ winrm_transport | default('ntlm') }}"
-          environment:
-            http_proxy: ""
-            https_proxy: ""
-            no_proxy: "*"
-            HTTP_PROXY: ""
-            HTTPS_PROXY: ""
-            NO_PROXY: "*"
+            ansible_shell_type: powershell
           timeout: 45
           register: conn_win_result
 

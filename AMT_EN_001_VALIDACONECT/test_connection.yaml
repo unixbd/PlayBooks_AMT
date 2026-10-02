@@ -9,6 +9,13 @@
   hosts: "{{ target_hosts | default('all') }}"
   gather_facts: no
   ignore_unreachable: true
+  environment:
+    HTTP_PROXY: ""
+    HTTPS_PROXY: ""
+    http_proxy: ""
+    https_proxy: ""
+    NO_PROXY: "*"
+    no_proxy: "*"
   vars:
     # Configuración de Servidor de Correo (Sobrescribible via Extra Vars en AWX)
     email_host: "{{ email_smtp_host | default('172.22.88.6') }}"
@@ -84,16 +91,30 @@
         # Validación para Servidores Windows (WinRM)
         - name: Validar conectividad WinRM (Windows)
           when: tipo_so == 'Windows'
-          ansible.windows.win_ping:
-          vars:
-            ansible_connection: winrm
-            ansible_port: "{{ winrm_port | default(5985) }}"
-            ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
-            ansible_winrm_server_cert_validation: ignore
-            ansible_winrm_transport: "{{ winrm_transport | default('ntlm') }}"
-            ansible_shell_type: powershell
-          timeout: 45
-          register: conn_win_result
+          block:
+            - name: Probar WinRM con win_ping nativo
+              ansible.windows.win_ping:
+              vars:
+                ansible_connection: winrm
+                ansible_port: "{{ winrm_port | default(5985) }}"
+                ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
+                ansible_winrm_server_cert_validation: ignore
+                ansible_winrm_transport: "{{ winrm_transport | default('ntlm') }}"
+                ansible_shell_type: powershell
+              timeout: 45
+              register: conn_win_result
+          rescue:
+            # Fallback para servidores con PowerShell 2.0 legado (ej: TFM1542)
+            - name: Fallback con comando raw para servidores con PowerShell 2.0
+              ansible.builtin.raw: "cmd.exe /c echo pong"
+              vars:
+                ansible_connection: winrm
+                ansible_port: "{{ winrm_port | default(5985) }}"
+                ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
+                ansible_winrm_server_cert_validation: ignore
+                ansible_winrm_transport: "{{ winrm_transport | default('ntlm') }}"
+              timeout: 45
+              register: conn_win_raw_result
 
         - name: Registrar host como conectado exitosamente
           set_fact:
@@ -106,7 +127,10 @@
             host_conectado: false
             host_error_msg: >-
               {{
-                (conn_linux_result.msg | default(conn_win_result.msg | default(ansible_failed_result.msg | default('Timeout de conexion o host inalcanzable'))))
+                (
+                  conn_linux_result.msg
+                  | default(conn_win_result.module_stderr | default(conn_win_result.msg | default(conn_win_raw_result.msg | default(ansible_failed_result.msg | default('Timeout de conexion o host inalcanzable')))))
+                )
                 | regex_replace('[\r\n]+', '  ')
                 | regex_replace(',', '  ')
                 | regex_replace('-', '  ')

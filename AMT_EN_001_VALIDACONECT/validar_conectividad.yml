@@ -128,25 +128,25 @@
     # --------------------------------------------------------------------------
     - name: Consolidar metricas globales de conectividad
       set_fact:
-        total_hosts: "{{ ansible_play_hosts_all | length }}"
-        total_exitosos: "{{ ansible_play_hosts_all | map('extract', hostvars, 'host_conectado') | select('defined') | select('equalto', true) | list | length }}"
-        total_fallidos: "{{ ansible_play_hosts_all | map('extract', hostvars, 'host_conectado') | select('defined') | select('equalto', false) | list | length }}"
-        total_linux_evaluados: "{{ ansible_play_hosts_all | select('in', (groups['linux_servers'] | default([]))) | list | length }}"
-        total_linux_ok: "{{ ansible_play_hosts_all | select('in', (groups['linux_servers'] | default([]))) | map('extract', hostvars, 'host_conectado') | select('defined') | select('equalto', true) | list | length }}"
-        total_linux_fail: "{{ ansible_play_hosts_all | select('in', (groups['linux_servers'] | default([]))) | map('extract', hostvars, 'host_conectado') | select('defined') | select('equalto', false) | list | length }}"
-        total_win_evaluados: "{{ ansible_play_hosts_all | select('in', (groups['windows_servers'] | default([]))) | list | length }}"
-        total_win_ok: "{{ ansible_play_hosts_all | select('in', (groups['windows_servers'] | default([]))) | map('extract', hostvars, 'host_conectado') | select('defined') | select('equalto', true) | list | length }}"
-        total_win_fail: "{{ ansible_play_hosts_all | select('in', (groups['windows_servers'] | default([]))) | map('extract', hostvars, 'host_conectado') | select('defined') | select('equalto', false) | list | length }}"
-      delegate_to: localhost
+        total_hosts: "{{ ansible_play_hosts_all | length | int }}"
+        total_exitosos: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'host_conectado') | select('defined') | select('equalto', true) | list | length) | int }}"
+        total_fallidos: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'host_conectado') | select('defined') | select('equalto', false) | list | length) | int }}"
+        total_linux: "{{ (ansible_play_hosts_all | select('in', (groups['linux_servers'] | default([]))) | list | length) | int }}"
+        total_linux_ok: "{{ (ansible_play_hosts_all | select('in', (groups['linux_servers'] | default([]))) | map('extract', hostvars, 'host_conectado') | select('defined') | select('equalto', true) | list | length) | int }}"
+        total_win: "{{ (ansible_play_hosts_all | select('in', (groups['windows_servers'] | default([]))) | list | length) | int }}"
+        total_win_ok: "{{ (ansible_play_hosts_all | select('in', (groups['windows_servers'] | default([]))) | map('extract', hostvars, 'host_conectado') | select('defined') | select('equalto', true) | list | length) | int }}"
       run_once: true
 
-    - name: Adaptar variables estandar de compatibilidad con UNIX
+    - name: Adaptar variables estandar y calcular porcentajes
       set_fact:
         fallidos:
           stdout: "{{ total_fallidos }}"
-        porcentaje_efectividad: "{{ ((total_exitosos | float * 100.0) / (total_hosts | float)) | round(1) if (total_hosts | int > 0) else 0 }}"
-        porcentaje_afectados: "{{ ((total_fallidos | float * 100.0) / (total_hosts | float)) | round(1) if (total_hosts | int > 0) else 0 }}"
-      delegate_to: localhost
+        total_linux_fail: "{{ (total_linux | int) - (total_linux_ok | int) }}"
+        total_win_fail: "{{ (total_win | int) - (total_win_ok | int) }}"
+        porcentaje_conectados: "{{ ((total_exitosos | float * 100.0) / (total_hosts | float)) | round(1) if (total_hosts | int > 0) else 0.0 }}"
+        porcentaje_fallidos: "{{ ((total_fallidos | float * 100.0) / (total_hosts | float)) | round(1) if (total_hosts | int > 0) else 0.0 }}"
+        pct_linux_ok: "{{ ((total_linux_ok | float * 100.0) / (total_linux | float)) | round(1) if (total_linux | int > 0) else 0.0 }}"
+        pct_win_ok: "{{ ((total_win_ok | float * 100.0) / (total_win | float)) | round(1) if (total_win | int > 0) else 0.0 }}"
       run_once: true
 
     - name: Mostrar resumen del diagnostico en logs
@@ -154,13 +154,12 @@
         msg:
           - "================ RESUMEN DE CONECTIVIDAD AMT ================"
           - "Total Servidores Evaluados : {{ total_hosts }}"
-          - "Conectados Exitosamente    : {{ total_exitosos }} ({{ porcentaje_efectividad }}%)"
-          - "Sin Conectividad (Fallidos): {{ total_fallidos }} ({{ porcentaje_afectados }}%)"
-          - "Linux   - OK: {{ total_linux_ok }} / Fallidos: {{ total_linux_fail }} (Total: {{ total_linux_evaluados }})"
-          - "Windows - OK: {{ total_win_ok }} / Fallidos: {{ total_win_fail }} (Total: {{ total_win_evaluados }})"
+          - "Conectados Exitosamente    : {{ total_exitosos }} ({{ porcentaje_conectados }}%)"
+          - "Sin Conectividad (Fallidos): {{ total_fallidos }} ({{ porcentaje_fallidos }}%)"
+          - "Linux   - OK: {{ total_linux_ok }} / Fallidos: {{ total_linux_fail }} (Total: {{ total_linux }})"
+          - "Windows - OK: {{ total_win_ok }} / Fallidos: {{ total_win_fail }} (Total: {{ total_win }})"
           - "Archivo CSV generado       : {{ output_file }}"
           - "=============================================================="
-      delegate_to: localhost
       run_once: true
 
     # --------------------------------------------------------------------------
@@ -181,6 +180,20 @@
           - "{{ output_file }}"
       delegate_to: localhost
       run_once: true
+      vars:
+        total_hosts: "{{ total_hosts }}"
+        total_exitosos: "{{ total_exitosos }}"
+        total_fallidos: "{{ total_fallidos }}"
+        porcentaje_conectados: "{{ porcentaje_conectados }}"
+        porcentaje_fallidos: "{{ porcentaje_fallidos }}"
+        total_linux: "{{ total_linux }}"
+        total_linux_ok: "{{ total_linux_ok }}"
+        total_linux_fail: "{{ total_linux_fail }}"
+        pct_linux_ok: "{{ pct_linux_ok }}"
+        total_win: "{{ total_win }}"
+        total_win_ok: "{{ total_win_ok }}"
+        total_win_fail: "{{ total_win_fail }}"
+        pct_win_ok: "{{ pct_win_ok }}"
       when:
         - email_to is defined
         - email_to | length > 0

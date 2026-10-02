@@ -34,12 +34,12 @@
 </head>
 <body>
 
-{# --- Variables numéricas y cálculos de métricas --- #}
-{% set total = (total_hosts | default(0) | int) %}
-{% set err_count = (total_fallidos | default(fallidos.stdout | default(0)) | int) %}
-{% set ok_count = (total_exitosos | default(total - err_count) | int) %}
-{% set pct_ok = ((ok_count * 100.0 / total) | round(1)) if total > 0 else 0 %}
-{% set pct_err = ((err_count * 100.0 / total) | round(1)) if total > 0 else 0 %}
+{# --- Variables numéricas y métricas precalculadas --- #}
+{% set total = (total_hosts | default(0)) | int %}
+{% set ok_count = (total_exitosos | default(0)) | int %}
+{% set err_count = (total_fallidos | default(0)) | int %}
+{% set pct_ok = (porcentaje_conectados | default(0)) | float %}
+{% set pct_err = (porcentaje_fallidos | default(0)) | float %}
 
 <table role="presentation" width="100%">
   <tr>
@@ -113,7 +113,7 @@
             </table>
 
             {# === Desglose por Sistema Operativo si está disponible === #}
-            {% if total_linux_evaluados is defined and total_win_evaluados is defined %}
+            {% if total_linux is defined and total_win is defined and (total_linux | int + total_win | int > 0) %}
             <h3 style="font-size:14px; color:#4b5563; margin:16px 0 8px 0; text-transform:uppercase; letter-spacing:0.03em;">
               Detalle por Plataforma
             </h3>
@@ -131,20 +131,20 @@
               <tbody>
                 <tr>
                   <td style="padding:8px 12px; border:1px solid #e5e7eb; font-weight:600;">Linux (SSH)</td>
-                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center;">{{ total_linux_evaluados }}</td>
-                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center; color:#137333; font-weight:600;">{{ total_linux_ok }}</td>
-                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center; color:#c5221f; font-weight:600;">{{ total_linux_fail }}</td>
+                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center;">{{ total_linux | default(0) }}</td>
+                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center; color:#137333; font-weight:600;">{{ total_linux_ok | default(0) }}</td>
+                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center; color:#c5221f; font-weight:600;">{{ total_linux_fail | default(0) }}</td>
                   <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center;">
-                    {{ ((total_linux_ok * 100.0 / total_linux_evaluados) | round(1)) if (total_linux_evaluados | int > 0) else 0 }}%
+                    {{ pct_linux_ok | default(0) }}%
                   </td>
                 </tr>
                 <tr style="background:#fafafa;">
                   <td style="padding:8px 12px; border:1px solid #e5e7eb; font-weight:600;">Windows (WinRM)</td>
-                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center;">{{ total_win_evaluados }}</td>
-                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center; color:#137333; font-weight:600;">{{ total_win_ok }}</td>
-                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center; color:#c5221f; font-weight:600;">{{ total_win_fail }}</td>
+                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center;">{{ total_win | default(0) }}</td>
+                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center; color:#137333; font-weight:600;">{{ total_win_ok | default(0) }}</td>
+                  <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center; color:#c5221f; font-weight:600;">{{ total_win_fail | default(0) }}</td>
                   <td style="padding:8px 12px; border:1px solid #e5e7eb; text-align:center;">
-                    {{ ((total_win_ok * 100.0 / total_win_evaluados) | round(1)) if (total_win_evaluados | int > 0) else 0 }}%
+                    {{ pct_win_ok | default(0) }}%
                   </td>
                 </tr>
               </tbody>

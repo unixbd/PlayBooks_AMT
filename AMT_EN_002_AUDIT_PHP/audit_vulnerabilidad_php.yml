@@ -61,76 +61,130 @@
       ansible.builtin.set_fact:
         tipo_so: "{{ 'Windows' if (ansible_connection | default('') == 'winrm' or 'windows_servers' in group_names) else 'Linux' }}"
 
-    - name: Validar conectividad de red por servidor (SSH / WinRM)
-      block:
-        # Validación SSH (Linux)
-        - name: Probar conectividad SSH (Linux)
-          when: tipo_so == 'Linux'
-          ansible.builtin.ping:
-          vars:
-            ansible_connection: ssh
-            ansible_user: "{{ linux_user_override | default(omit) }}"
-            ansible_password: "{{ linux_pass_override | default(omit) }}"
-            ansible_ssh_pass: "{{ linux_pass_override | default(omit) }}"
-            ansible_ssh_common_args: >-
-              -o StrictHostKeyChecking=no
-              -o UserKnownHostsFile=/dev/null
-              -o ConnectTimeout={{ conn_connect_timeout }}
-          timeout: 35
-          register: conn_linux_result
+    - name: Inicializar estado base de conectividad y diagnostico
+      ansible.builtin.set_fact:
+        host_conectado: false
+        host_error_msg: "Sin conexion o credenciales no verificadas"
+        host_so_desc: "{{ tipo_so }} (Sin Conexión)"
+        php_instalado: false
+        php_version: "N/D"
+        php_ruta: "N/D"
+        tiene_contenedores_php: false
+        contenedores_php_desc: "N/D"
+        estado_vulnerabilidad: "SIN_CONEXION"
+        detalle_dictamen: "Fallo de conectividad o credenciales rechazadas al evaluar el servidor"
 
-        # Validación WinRM (Windows)
-        - name: Probar conectividad WinRM (Windows)
-          when: tipo_so == 'Windows'
-          block:
-            - name: Probar WinRM con win_ping nativo
-              ansible.windows.win_ping:
-              vars:
-                ansible_connection: winrm
-                ansible_port: "{{ winrm_port | default(5985) }}"
-                ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
-                ansible_winrm_server_cert_validation: ignore
-                ansible_winrm_transport: "{{ winrm_transport_clean }}"
-                ansible_shell_type: powershell
-              timeout: 35
-              register: conn_win_result
-          rescue:
-            # Fallback para servidores Windows con PowerShell 2.0 legado (ej: TFM1542)
-            - name: "Fallback con comando raw para PowerShell 2.0"
-              ansible.builtin.raw: "cmd.exe /c echo pong"
-              vars:
-                ansible_connection: winrm
-                ansible_port: "{{ winrm_port | default(5985) }}"
-                ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
-                ansible_winrm_server_cert_validation: ignore
-                ansible_winrm_transport: "{{ winrm_transport_clean }}"
-              timeout: 35
-              register: conn_win_raw_result
+    # Validación SSH (Linux)
+    - name: Probar conectividad SSH (Linux)
+      when: tipo_so == 'Linux'
+      ansible.builtin.ping:
+      vars:
+        ansible_connection: ssh
+        ansible_user: "{{ linux_user_override | default(omit) }}"
+        ansible_password: "{{ linux_pass_override | default(omit) }}"
+        ansible_ssh_pass: "{{ linux_pass_override | default(omit) }}"
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ConnectTimeout={{ conn_connect_timeout }}
+      timeout: 35
+      register: conn_linux_result
+      ignore_errors: true
+      ignore_unreachable: true
 
-        - name: Marcar servidor como conectado exitosamente
-          ansible.builtin.set_fact:
-            host_conectado: true
-            host_error_msg: "OK"
+    # Validación WinRM (Windows)
+    - name: Probar conectividad WinRM nativa (Windows)
+      when: tipo_so == 'Windows'
+      ansible.windows.win_ping:
+      vars:
+        ansible_connection: winrm
+        ansible_port: "{{ winrm_port | default(5985) }}"
+        ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
+        ansible_winrm_server_cert_validation: ignore
+        ansible_winrm_transport: "{{ winrm_transport_clean }}"
+        ansible_shell_type: powershell
+      timeout: 35
+      register: conn_win_result
+      ignore_errors: true
+      ignore_unreachable: true
 
-      rescue:
-        - name: Marcar servidor como inalcanzable / sin conexion
-          ansible.builtin.set_fact:
-            host_conectado: false
-            host_error_msg: >-
-              {{
-                conn_linux_result.msg
-                | default(conn_win_result.module_stderr | default(conn_win_result.msg | default(conn_win_raw_result.msg | default('Timeout de conexión o credenciales rechazadas'))))
-                | regex_replace('[\r\n]+', ' ')
-                | trim
-              }}
-            host_so_desc: "{{ tipo_so }} (Sin Conexión)"
-            php_instalado: false
-            php_version: "N/D"
-            php_ruta: "N/D"
-            tiene_contenedores_php: false
-            contenedores_php_desc: "N/D"
-            estado_vulnerabilidad: "SIN_CONEXION"
-            detalle_dictamen: "Error de conectividad SSH / WinRM al evaluar el servidor"
+    - name: Fallback con comando raw para PowerShell 2.0 (Windows)
+      when:
+        - tipo_so == 'Windows'
+        - (conn_win_result is failed or conn_win_result is unreachable or (conn_win_result.ping is not defined))
+      ansible.builtin.raw: "cmd.exe /c echo pong"
+      vars:
+        ansible_connection: winrm
+        ansible_port: "{{ winrm_port | default(5985) }}"
+        ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
+        ansible_winrm_server_cert_validation: ignore
+        ansible_winrm_transport: "{{ winrm_transport_clean }}"
+      timeout: 35
+      register: conn_win_raw_result
+      ignore_errors: true
+      ignore_unreachable: true
+
+    - name: Evaluar y registrar estado real de conectividad
+      ansible.builtin.set_fact:
+        host_conectado: >-
+          {{
+            (
+              conn_linux_result is defined and
+              (conn_linux_result is not failed) and
+              (conn_linux_result is not unreachable) and
+              ((conn_linux_result.ping | default('')) == 'pong')
+            )
+            if tipo_so == 'Linux'
+            else (
+              (
+                conn_win_result is defined and
+                (conn_win_result is not failed) and
+                (conn_win_result is not unreachable) and
+                ((conn_win_result.ping | default('')) == 'pong')
+              ) or (
+                conn_win_raw_result is defined and
+                (conn_win_raw_result is not failed) and
+                (conn_win_raw_result is not unreachable) and
+                ('pong' in (conn_win_raw_result.stdout | default('')))
+              )
+            )
+          }}
+
+    - name: Registrar diagnostico para servidores sin conexion o credenciales rechazadas
+      when: not (host_conectado | bool)
+      ansible.builtin.set_fact:
+        host_error_msg: >-
+          {{
+            (conn_linux_result.msg | default(conn_linux_result.module_stderr | default('Fallo de conexión SSH / Timeout')))
+            if tipo_so == 'Linux'
+            else (
+              conn_win_result.msg
+              | default(conn_win_result.module_stderr
+              | default(conn_win_raw_result.msg
+              | default(conn_win_raw_result.module_stderr
+              | default('Credenciales rechazadas (NTLM) o puerto WinRM inaccesible'))))
+            )
+          }}
+        detalle_dictamen: >-
+          {{
+            'Error de autenticación WinRM: credenciales rechazadas por el servidor (NTLM)'
+            if (
+              ('credentials were rejected' in ((conn_win_result.msg | default('')) ~ (conn_win_raw_result.msg | default('')))) or
+              ('rejected by the server' in ((conn_win_result.msg | default('')) ~ (conn_win_raw_result.msg | default(''))))
+            )
+            else (
+              'Error de conectividad SSH / Linux: ' ~ (conn_linux_result.msg | default('Host inalcanzable'))
+              if tipo_so == 'Linux'
+              else 'Error de conectividad WinRM: ' ~ (conn_win_result.msg | default(conn_win_raw_result.msg | default('Host inalcanzable o puerto 5985 cerrado')))
+            )
+          }}
+        estado_vulnerabilidad: "SIN_CONEXION"
+        host_so_desc: "{{ tipo_so }} (Sin Conexión)"
+
+    - name: Registrar servidor como conectado exitosamente
+      when: host_conectado | bool
+      ansible.builtin.set_fact:
+        host_error_msg: "OK"
 
     # --------------------------------------------------------------------------
     # 3. AUDITORÍA EN SERVIDORES CONECTADOS (LINUX)
@@ -212,13 +266,32 @@
           register: linux_audit_raw
           changed_when: false
           ignore_errors: true
+          ignore_unreachable: true
           timeout: 45
 
-        - name: Procesar variables capturadas de Linux
+        - name: Validar si la inspeccion en Linux fue exitosa
           ansible.builtin.set_fact:
-            host_so_desc: "{{ (linux_audit_raw.stdout_lines[0].split('|')[0] | regex_replace('^SO:', '') | trim) if (linux_audit_raw.stdout_lines is defined and linux_audit_raw.stdout_lines | length > 0 and 'SO:' in linux_audit_raw.stdout_lines[0]) else 'Linux' }}"
-            php_status_line: "{{ (linux_audit_raw.stdout_lines[0].split('|')[1:4] | join('|') | regex_replace('^PHP:', '') | trim) if (linux_audit_raw.stdout_lines is defined and linux_audit_raw.stdout_lines | length > 0) else 'NO_INSTALADO||' }}"
-            containers_php_raw: "{{ (linux_audit_raw.stdout_lines[0].split('|')[4:] | join('|') | regex_replace('^CONT:', '') | trim) if (linux_audit_raw.stdout_lines is defined and linux_audit_raw.stdout_lines | length > 0 and 'CONT:' in linux_audit_raw.stdout_lines[0]) else 'NINGUNO' }}"
+            linux_audit_ok: "{{ linux_audit_raw is defined and (linux_audit_raw is not failed) and (linux_audit_raw is not unreachable) and (linux_audit_raw.stdout_lines is defined) and (linux_audit_raw.stdout_lines | length > 0) and ('SO:' in linux_audit_raw.stdout_lines[0]) }}"
+
+        - name: Procesar variables capturadas de Linux
+          when: linux_audit_ok | bool
+          ansible.builtin.set_fact:
+            host_so_desc: "{{ linux_audit_raw.stdout_lines[0].split('|')[0] | regex_replace('^SO:', '') | trim }}"
+            php_status_line: "{{ linux_audit_raw.stdout_lines[0].split('|')[1:4] | join('|') | regex_replace('^PHP:', '') | trim }}"
+            containers_php_raw: "{{ linux_audit_raw.stdout_lines[0].split('|')[4:] | join('|') | regex_replace('^CONT:', '') | trim }}"
+
+        - name: Marcar servidor Linux como inalcanzable si fallo la auditoria
+          when: not (linux_audit_ok | bool)
+          ansible.builtin.set_fact:
+            host_conectado: false
+            estado_vulnerabilidad: "SIN_CONEXION"
+            host_so_desc: "Linux (Sin Conexión)"
+            php_instalado: false
+            php_version: "N/D"
+            php_ruta: "N/D"
+            tiene_contenedores_php: false
+            contenedores_php_desc: "N/D"
+            detalle_dictamen: "{{ 'Error de conectividad SSH durante auditoría: ' ~ (linux_audit_raw.msg | default('Timeout o sesión terminada')) }}"
 
     # --------------------------------------------------------------------------
     # 4. AUDITORÍA EN SERVIDORES CONECTADOS (WINDOWS)
@@ -296,17 +369,12 @@
             ansible_shell_type: powershell
           register: win_audit_raw
           changed_when: false
+          ignore_errors: true
+          ignore_unreachable: true
           timeout: 45
 
-        - name: Procesar variables capturadas de Windows
-          ansible.builtin.set_fact:
-            host_so_desc: "{{ (win_audit_raw.stdout_lines[0].split('|')[0] | regex_replace('^SO:', '') | trim) if (win_audit_raw.stdout_lines is defined and win_audit_raw.stdout_lines | length > 0 and 'SO:' in win_audit_raw.stdout_lines[0]) else 'Windows Server' }}"
-            php_status_line: "{{ (win_audit_raw.stdout_lines[0].split('|')[1:4] | join('|') | regex_replace('^PHP:', '') | trim) if (win_audit_raw.stdout_lines is defined and win_audit_raw.stdout_lines | length > 0) else 'NO_INSTALADO||' }}"
-            containers_php_raw: "{{ (win_audit_raw.stdout_lines[0].split('|')[4:] | join('|') | regex_replace('^CONT:', '') | trim) if (win_audit_raw.stdout_lines is defined and win_audit_raw.stdout_lines | length > 0 and 'CONT:' in win_audit_raw.stdout_lines[0]) else 'NINGUNO' }}"
-
-      rescue:
-        # Fallback CMD nativo para servidores con PowerShell 2.0 legado (ej: TFM1542)
-        - name: Fallback CMD nativo para PowerShell 2.0
+        - name: Fallback CMD nativo para PowerShell 2.0 (Windows)
+          when: (win_audit_raw is failed) or (win_audit_raw is unreachable) or (win_audit_raw.stdout_lines is not defined) or (win_audit_raw.stdout_lines | length == 0) or ('SO:' not in (win_audit_raw.stdout_lines[0] | default('')))
           ansible.builtin.raw: 'cmd.exe /c ver & where php.exe 2>nul || (for %i in (C:\php\php.exe C:\tools\php\php.exe C:\xampp\php\php.exe "C:\Program Files\PHP\php.exe") do @if exist "%~i" echo %~i)'
           vars:
             ansible_connection: winrm
@@ -315,13 +383,55 @@
             ansible_winrm_server_cert_validation: ignore
             ansible_winrm_transport: "{{ winrm_transport_clean }}"
           register: win_raw_fallback
+          ignore_errors: true
+          ignore_unreachable: true
           timeout: 35
 
-        - name: Parsear resultado de fallback CMD en Windows
+        - name: Evaluar si alguna auditoria en Windows fue exitosa
+          ansible.builtin.set_fact:
+            win_shell_ok: "{{ win_audit_raw is defined and (win_audit_raw is not failed) and (win_audit_raw is not unreachable) and (win_audit_raw.stdout_lines is defined) and (win_audit_raw.stdout_lines | length > 0) and ('SO:' in win_audit_raw.stdout_lines[0]) }}"
+            win_raw_ok: "{{ win_raw_fallback is defined and (win_raw_fallback is not failed) and (win_raw_fallback is not unreachable) and (win_raw_fallback.stdout_lines is defined) and (win_raw_fallback.stdout_lines | length > 0) }}"
+
+        - name: Procesar variables desde win_shell
+          when: win_shell_ok | bool
+          ansible.builtin.set_fact:
+            host_so_desc: "{{ win_audit_raw.stdout_lines[0].split('|')[0] | regex_replace('^SO:', '') | trim }}"
+            php_status_line: "{{ win_audit_raw.stdout_lines[0].split('|')[1:4] | join('|') | regex_replace('^PHP:', '') | trim }}"
+            containers_php_raw: "{{ win_audit_raw.stdout_lines[0].split('|')[4:] | join('|') | regex_replace('^CONT:', '') | trim }}"
+
+        - name: Procesar variables desde fallback CMD
+          when:
+            - not (win_shell_ok | bool)
+            - win_raw_ok | bool
           ansible.builtin.set_fact:
             host_so_desc: "{{ (win_raw_fallback.stdout_lines | select('search', 'Microsoft Windows') | list | first) | default('Windows Server (Legacy PS 2.0)') }}"
             php_status_line: "{{ 'SI_INSTALADO|' ~ (win_raw_fallback.stdout_lines | select('search', 'php.exe') | list | first) ~ '|PHP' if (win_raw_fallback.stdout_lines is defined and win_raw_fallback.stdout_lines | select('search', 'php.exe') | list | length > 0) else 'NO_INSTALADO||' }}"
             containers_php_raw: "NINGUNO"
+
+        - name: Marcar servidor Windows como inalcanzable si fallaron todos los metodos
+          when:
+            - not (win_shell_ok | bool)
+            - not (win_raw_ok | bool)
+          ansible.builtin.set_fact:
+            host_conectado: false
+            estado_vulnerabilidad: "SIN_CONEXION"
+            host_so_desc: "Windows (Sin Conexión)"
+            php_instalado: false
+            php_version: "N/D"
+            php_ruta: "N/D"
+            tiene_contenedores_php: false
+            contenedores_php_desc: "N/D"
+            detalle_dictamen: >-
+              {{
+                'Error de autenticación WinRM: credenciales rechazadas por el servidor (NTLM)'
+                if (
+                  ('credentials were rejected' in ((win_audit_raw.msg | default('')) ~ (win_raw_fallback.msg | default('')))) or
+                  ('rejected by the server' in ((win_audit_raw.msg | default('')) ~ (win_raw_fallback.msg | default(''))))
+                )
+                else (
+                  'Error de conectividad WinRM: ' ~ (win_audit_raw.msg | default(win_raw_fallback.msg | default('Inalcanzable o puerto cerrado')))
+                )
+              }}
 
     # --------------------------------------------------------------------------
     # 5. EVALUACIÓN DE VULNERABILIDAD SEGÚN CERT-EU 2026-018

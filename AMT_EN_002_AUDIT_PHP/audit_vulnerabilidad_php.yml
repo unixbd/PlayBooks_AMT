@@ -4,6 +4,7 @@
 # CVEs: CVE-2026-109618 (OOM RCE) y CVE-2026-109619 (Stale Global State RCE)
 # Proyecto: AMT_EN_002_AUDIT_PHP
 # Estandarizado con el lineamiento institucional de PlayBooks_AMT
+# Soporte Híbrido: Linux (SSH), Windows (WinRM / PS 2.0 Fallback) y Contenedores (Docker / Podman)
 # ==============================================================================
 
 - name: Auditoría de Vulnerabilidad Crítica PHP - Servidores AMT
@@ -26,12 +27,15 @@
     # --------------------------------------------------------------------------
     actividad: "AUDITORÍA DE VULNERABILIDAD PHP (CERT-EU 2026-018)"
     titulo_reporte: "Reporte de Seguridad PHP"
-    subtitulo_reporte: "Auditoría de Versiones y Exposición a CVE-2026-109618 / CVE-2026-109619"
+    subtitulo_reporte: "Auditoría de Versiones y Exposición a CVE-2026-109618 / CVE-2026-109619 (Host y Contenedores)"
     area_nombre: "Área de Automatización y Middleware (AMT)"
 
     # Timeouts de conexión (segundos)
     conn_timeout: "{{ connection_timeout | default(20) }}"
     conn_connect_timeout: "{{ connect_timeout | default(10) }}"
+
+    # Limpieza estricta de transporte WinRM para evitar comentarios residuales del inventario
+    winrm_transport_clean: "{{ (winrm_transport | default(ansible_winrm_transport | default('ntlm'))) | regex_replace('\\s*#.*$', '') | trim }}"
 
     # Recursos gráficos y plantillas institucionales
     signature_b64: "{{ lookup('file', playbook_dir ~ '/../resources/img/FirmaClaro.gif', errors='ignore') | default('', true) | b64encode }}"
@@ -116,126 +120,250 @@
               changed_when: false
               timeout: 20
 
+            - name: Auditar contenedores (Docker / Podman) en Linux en busca de PHP
+              ansible.builtin.shell: |
+                CONTAINER_AUDIT=""
+                # 1. Comprobar Docker
+                if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then
+                  for cid in $(docker ps -q 2>/dev/null); do
+                    cname=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's/^\///')
+                    cimg=$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null)
+                    cphp=$(docker exec "$cid" php -v 2>/dev/null | head -n 1)
+                    if [ -n "$cphp" ]; then
+                      CONTAINER_AUDIT="${CONTAINER_AUDIT}[Docker:${cname}|${cimg}|${cphp}]; "
+                    fi
+                  done
+                fi
+                # 2. Comprobar Podman
+                if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then
+                  for cid in $(podman ps -q 2>/dev/null); do
+                    cname=$(podman inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's/^\///')
+                    cimg=$(podman inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null)
+                    cphp=$(podman exec "$cid" php -v 2>/dev/null | head -n 1)
+                    if [ -n "$cphp" ]; then
+                      CONTAINER_AUDIT="${CONTAINER_AUDIT}[Podman:${cname}|${cimg}|${cphp}]; "
+                    fi
+                  done
+                fi
+
+                echo "${CONTAINER_AUDIT:-NINGUNO}"
+              register: linux_containers_raw
+              changed_when: false
+              ignore_errors: true
+              timeout: 30
+
             - name: Parsear resultados de deteccion Linux
               ansible.builtin.set_fact:
                 host_conectado: true
                 host_so_desc: "{{ linux_os_raw.stdout | default('Linux (Desconocido)') | trim }}"
                 php_status_line: "{{ linux_php_raw.stdout | default('NO_INSTALADO||') | trim }}"
+                containers_php_raw: "{{ linux_containers_raw.stdout | default('NINGUNO') | trim }}"
 
         # ======================================================================
-        # RAMA WINDOWS (WinRM / PowerShell)
+        # RAMA WINDOWS (WinRM / PowerShell / Fallback Raw PS 2.0)
         # ======================================================================
         - name: Auditoria para servidores Windows
           when: tipo_so == 'Windows'
           block:
             - name: Validar conectividad WinRM preliminar
-              ansible.windows.win_ping:
-              vars:
-                ansible_connection: winrm
-                ansible_port: "{{ winrm_port | default(5985) }}"
-                ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
-                ansible_winrm_server_cert_validation: ignore
-                ansible_winrm_transport: "{{ winrm_transport | default('ntlm') }}"
-                ansible_shell_type: powershell
-              timeout: 30
+              block:
+                - name: Probar WinRM con win_ping nativo
+                  ansible.windows.win_ping:
+                  vars:
+                    ansible_connection: winrm
+                    ansible_port: "{{ winrm_port | default(5985) }}"
+                    ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
+                    ansible_winrm_server_cert_validation: ignore
+                    ansible_winrm_transport: "{{ winrm_transport_clean }}"
+                    ansible_shell_type: powershell
+                  timeout: 35
+              rescue:
+                - name: Fallback con comando raw para servidores Windows legados (ej: PowerShell 2.0)
+                  ansible.builtin.raw: "cmd.exe /c echo pong"
+                  vars:
+                    ansible_connection: winrm
+                    ansible_port: "{{ winrm_port | default(5985) }}"
+                    ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
+                    ansible_winrm_server_cert_validation: ignore
+                    ansible_winrm_transport: "{{ winrm_transport_clean }}"
+                  timeout: 35
 
-            - name: Obtener SO y auditar PHP en Windows mediante PowerShell
-              ansible.windows.win_shell: |
-                $ErrorActionPreference = 'SilentlyContinue'
-                
-                # Obtener SO
-                $osInfo = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
-                if (-not $osInfo) {
-                  $osInfo = Get-WmiObject Win32_OperatingSystem -ErrorAction SilentlyContinue
-                }
-                $osName = if ($osInfo) { "$($osInfo.Caption) ($($osInfo.Version))" } else { "Windows (Desconocido)" }
-
-                # Buscar binario php.exe
-                $phpCmd = Get-Command php.exe -ErrorAction SilentlyContinue
-                $phpPath = $null
-                if ($phpCmd) {
-                  $phpPath = $phpCmd.Source
-                } else {
-                  $commonPaths = @(
-                    "C:\php\php.exe",
-                    "C:\xampp\php\php.exe",
-                    "C:\tools\php\php.exe",
-                    "C:\Program Files\PHP\php.exe",
-                    "C:\Program Files (x86)\PHP\php.exe"
-                  )
-                  foreach ($p in $commonPaths) {
-                    if (Test-Path $p) {
-                      $phpPath = $p
-                      break
+            - name: Obtener SO y auditar PHP en Windows
+              block:
+                - name: Ejecutar auditoria via win_shell con PowerShell
+                  ansible.windows.win_shell: |
+                    $ErrorActionPreference = 'SilentlyContinue'
+                    
+                    # 1. Obtener SO
+                    $osInfo = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+                    if (-not $osInfo) {
+                      $osInfo = Get-WmiObject Win32_OperatingSystem -ErrorAction SilentlyContinue
                     }
-                  }
-                }
+                    $osName = if ($osInfo) { "$($osInfo.Caption) ($($osInfo.Version))" } else { "Windows Server" }
 
-                if ($phpPath) {
-                  $firstLine = (& $phpPath -v | Select-Object -First 1)
-                  Write-Output "SO:$osName|PHP:INSTALADO|$phpPath|$firstLine"
-                } else {
-                  Write-Output "SO:$osName|PHP:NO_INSTALADO||"
-                }
-              vars:
-                ansible_connection: winrm
-                ansible_shell_type: powershell
-              register: win_audit_raw
-              changed_when: false
-              timeout: 30
+                    # 2. Buscar binario php.exe en host
+                    $phpCmd = Get-Command php.exe -ErrorAction SilentlyContinue
+                    $phpPath = $null
+                    if ($phpCmd) {
+                      $phpPath = $phpCmd.Source
+                    } else {
+                      $commonPaths = @(
+                        "C:\php\php.exe",
+                        "C:\xampp\php\php.exe",
+                        "C:\tools\php\php.exe",
+                        "C:\Program Files\PHP\php.exe",
+                        "C:\Program Files (x86)\PHP\php.exe"
+                      )
+                      foreach ($p in $commonPaths) {
+                        if (Test-Path $p) {
+                          $phpPath = $p
+                          break
+                        }
+                      }
+                    }
 
-            - name: Parsear resultados de deteccion Windows
-              ansible.builtin.set_fact:
-                host_conectado: true
-                host_so_desc: "{{ (win_audit_raw.stdout_lines[0].split('|')[0] | regex_replace('^SO:', '')) if (win_audit_raw.stdout_lines is defined and win_audit_raw.stdout_lines | length > 0 and 'SO:' in win_audit_raw.stdout_lines[0]) else 'Windows Server' }}"
-                php_status_line: "{{ (win_audit_raw.stdout_lines[0].split('|')[1:] | join('|') | regex_replace('^PHP:', '')) if (win_audit_raw.stdout_lines is defined and win_audit_raw.stdout_lines | length > 0) else 'NO_INSTALADO||' }}"
+                    $phpLine = if ($phpPath) {
+                      $v = (& $phpPath -v | Select-Object -First 1)
+                      "PHP:INSTALADO|$phpPath|$v"
+                    } else {
+                      "PHP:NO_INSTALADO||"
+                    }
+
+                    # 3. Auditar contenedores Windows (Docker si existe)
+                    $cAudit = ""
+                    if (Get-Command docker.exe -ErrorAction SilentlyContinue) {
+                      $cids = docker ps -q 2>$null
+                      if ($cids) {
+                        foreach ($cid in $cids) {
+                          $cname = (docker inspect -f "{{.Name}}" $cid 2>$null).TrimStart('/')
+                          $cimg = docker inspect -f "{{.Config.Image}}" $cid 2>$null
+                          $cphp = (docker exec $cid php -v 2>$null | Select-Object -First 1)
+                          if ($cphp) {
+                            $cAudit += "[Docker:$cname|$cimg|$cphp]; "
+                          }
+                        }
+                      }
+                    }
+                    if (-not $cAudit) { $cAudit = "NINGUNO" }
+
+                    Write-Output "SO:$osName|$phpLine|CONTAINERS:$cAudit"
+                  vars:
+                    ansible_connection: winrm
+                    ansible_port: "{{ winrm_port | default(5985) }}"
+                    ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
+                    ansible_winrm_server_cert_validation: ignore
+                    ansible_winrm_transport: "{{ winrm_transport_clean }}"
+                    ansible_shell_type: powershell
+                  register: win_audit_raw
+                  changed_when: false
+                  timeout: 40
+
+                - name: Parsear resultados de deteccion Windows
+                  ansible.builtin.set_fact:
+                    host_conectado: true
+                    host_so_desc: "{{ (win_audit_raw.stdout_lines[0].split('|')[0] | regex_replace('^SO:', '')) if (win_audit_raw.stdout_lines is defined and win_audit_raw.stdout_lines | length > 0 and 'SO:' in win_audit_raw.stdout_lines[0]) else 'Windows Server' }}"
+                    php_status_line: "{{ (win_audit_raw.stdout_lines[0].split('|')[1:4] | join('|') | regex_replace('^PHP:', '')) if (win_audit_raw.stdout_lines is defined and win_audit_raw.stdout_lines | length > 0) else 'NO_INSTALADO||' }}"
+                    containers_php_raw: "{{ (win_audit_raw.stdout_lines[0].split('|')[4:] | join('|') | regex_replace('^CONTAINERS:', '')) if (win_audit_raw.stdout_lines is defined and win_audit_raw.stdout_lines | length > 0 and 'CONTAINERS:' in win_audit_raw.stdout_lines[0]) else 'NINGUNO' }}"
+
+              rescue:
+                # Fallback con comandos CMD nativos para PowerShell 2.0 legado (ej: TFM1542)
+                - name: Fallback CMD nativo para servidores con PowerShell 2.0
+                  ansible.builtin.raw: 'cmd.exe /c ver & where php.exe 2>nul || (for %i in (C:\php\php.exe C:\tools\php\php.exe C:\xampp\php\php.exe "C:\Program Files\PHP\php.exe") do @if exist "%~i" echo %~i)'
+                  vars:
+                    ansible_connection: winrm
+                    ansible_port: "{{ winrm_port | default(5985) }}"
+                    ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
+                    ansible_winrm_server_cert_validation: ignore
+                    ansible_winrm_transport: "{{ winrm_transport_clean }}"
+                  register: win_raw_fallback
+                  timeout: 35
+
+                - name: Parsear resultado de fallback raw en Windows
+                  ansible.builtin.set_fact:
+                    host_conectado: true
+                    host_so_desc: "{{ (win_raw_fallback.stdout_lines | select('search', 'Microsoft Windows') | list | first) | default('Windows Server (Legacy PS 2.0)') }}"
+                    php_status_line: "{{ 'INSTALADO|' ~ (win_raw_fallback.stdout_lines | select('search', 'php.exe') | list | first) ~ '|PHP 7/8' if (win_raw_fallback.stdout_lines | select('search', 'php.exe') | list | length > 0) else 'NO_INSTALADO||' }}"
+                    containers_php_raw: "NINGUNO"
 
         # ======================================================================
-        # EVALUACIÓN DE VULNERABILIDAD SEGÚN CERT-EU 2026-018
+        # 3. EVALUACIÓN DE VULNERABILIDAD SEGÚN CERT-EU 2026-018
         # ======================================================================
-        - name: Procesar version de PHP y evaluar estado de vulnerabilidad
+        - name: Procesar version de PHP en Host
           ansible.builtin.set_fact:
-            php_instalado: "{{ ('INSTALADO' in php_status_line) }}"
-            php_ruta: "{{ (php_status_line.split('|')[1] | default('')) if ('INSTALADO' in php_status_line) else 'N/A' }}"
-            php_version_raw: "{{ (php_status_line.split('|')[2] | default('')) if ('INSTALADO' in php_status_line) else '' }}"
+            php_instalado: "{{ ('INSTALADO' in (php_status_line | default(''))) }}"
+            php_ruta: "{{ (php_status_line.split('|')[1] | default('')) if ('INSTALADO' in (php_status_line | default(''))) else 'N/A' }}"
+            php_version_raw: "{{ (php_status_line.split('|')[2] | default('')) if ('INSTALADO' in (php_status_line | default(''))) else '' }}"
 
-        - name: Extraer numero de version semantica de PHP
+        - name: Extraer numero de version semantica de PHP en Host
           ansible.builtin.set_fact:
             php_version: "{{ (php_version_raw | regex_search('PHP\\s+([0-9]+\\.[0-9]+\\.[0-9]+)', '\\1'))[0] | default('Desconocida') if php_instalado else 'No instalado' }}"
 
-        - name: Clasificar estado segun umbrales CERT-EU 2026-018
+        - name: Evaluar PHP en Contenedores si existen
+          ansible.builtin.set_fact:
+            tiene_contenedores_php: "{{ containers_php_raw is defined and containers_php_raw != 'NINGUNO' and containers_php_raw | length > 0 }}"
+            contenedores_php_desc: "{{ containers_php_raw if (containers_php_raw is defined and containers_php_raw != 'NINGUNO' and containers_php_raw | length > 0) else 'Sin contenedores con PHP' }}"
+
+        # Extraer versiones de contenedores y evaluar si alguno es vulnerable
+        - name: Determinar si algun contenedor ejecuta PHP vulnerable
+          ansible.builtin.set_fact:
+            contenedor_php_vuln: >-
+              {{
+                true if (
+                  tiene_contenedores_php and (
+                    'PHP 5.' in containers_php_raw or
+                    'PHP 7.' in containers_php_raw or
+                    'PHP 8.0.' in containers_php_raw or
+                    'PHP 8.1.' in containers_php_raw or
+                    'PHP 8.2.' in containers_php_raw or
+                    'PHP 8.3.' in containers_php_raw or
+                    'PHP 8.4.' in containers_php_raw
+                  )
+                ) else false
+              }}
+
+        - name: Clasificar estado del Host segun umbrales CERT-EU 2026-018
+          ansible.builtin.set_fact:
+            host_es_vulnerable: >-
+              {{
+                false if (not php_instalado)
+                else (
+                  false if (
+                    (php_version is version('8.5.12', '>=')) or
+                    (php_version is version('8.4.27', '>=') and php_version is version('8.5.0', '<')) or
+                    (php_version is version('8.3.36', '>=') and php_version is version('8.4.0', '<')) or
+                    (php_version is version('8.2.35', '>=') and php_version is version('8.3.0', '<'))
+                  )
+                  else true
+                )
+              }}
+
+        # Estado global combinado (Host + Contenedores)
+        - name: Consolidar estado final del servidor
           ansible.builtin.set_fact:
             estado_vulnerabilidad: >-
               {{
-                'NO_APLICA' if (not php_instalado)
+                'VULNERABLE' if (host_es_vulnerable or contenedor_php_vuln)
                 else (
-                  'INDETERMINADO' if (php_version == 'Desconocida')
-                  else (
-                    'NO_VULNERABLE' if (
-                      (php_version is version('8.5.12', '>=')) or
-                      (php_version is version('8.4.27', '>=') and php_version is version('8.5.0', '<')) or
-                      (php_version is version('8.3.36', '>=') and php_version is version('8.4.0', '<')) or
-                      (php_version is version('8.2.35', '>=') and php_version is version('8.3.0', '<'))
-                    )
-                    else 'VULNERABLE'
-                  )
+                  'NO_VULNERABLE' if (php_instalado or tiene_contenedores_php)
+                  else 'NO_APLICA'
                 )
               }}
             detalle_dictamen: >-
               {{
-                'PHP no se encuentra instalado en el servidor (Sin riesgo)' if (not php_instalado)
-                else (
-                  'No fue posible determinar la versión exacta de PHP' if (php_version == 'Desconocida')
+                (
+                  'CRÍTICO: Vulnerable en Host (' ~ php_version ~ ') y Contenedores (' ~ contenedores_php_desc ~ ')'
+                  if (host_es_vulnerable and contenedor_php_vuln)
                   else (
-                    'Versión segura con parche aplicado (CERT-EU 2026-018)' if (
-                      (php_version is version('8.5.12', '>=')) or
-                      (php_version is version('8.4.27', '>=') and php_version is version('8.5.0', '<')) or
-                      (php_version is version('8.3.36', '>=') and php_version is version('8.4.0', '<')) or
-                      (php_version is version('8.2.35', '>=') and php_version is version('8.3.0', '<'))
-                    )
+                    'CRÍTICO: Contenedor vulnerable detectado: ' ~ contenedores_php_desc
+                    if contenedor_php_vuln
                     else (
-                      'VULNERABLE (CVE-2026-109618 / CVE-2026-109619) - Requiere parche inmediato' if (php_version is version('8.2.0', '>='))
-                      else 'CRÍTICO: Rama EOL descontinuada (' ~ php_version ~ ') vulnerable sin soporte. Requiere actualización mayor.'
+                      'CRÍTICO: Vulnerable en Host (' ~ php_version ~ ') - CVE-2026-109618/19'
+                      if host_es_vulnerable
+                      else (
+                        'Versión segura con parche aplicado (Host: ' ~ php_version ~ (', Contenedores: ' ~ contenedores_php_desc if tiene_contenedores_php else '') ~ ')'
+                        if (php_instalado or tiene_contenedores_php)
+                        else 'PHP no se encuentra instalado en el servidor ni en contenedores (Sin riesgo)'
+                      )
                     )
                   )
                 )
@@ -249,11 +377,13 @@
             php_instalado: false
             php_version: "N/D"
             php_ruta: "N/D"
+            tiene_contenedores_php: false
+            contenedores_php_desc: "N/D"
             estado_vulnerabilidad: "SIN_CONEXION"
             detalle_dictamen: "Error de conectividad SSH / WinRM al evaluar el servidor"
 
     # --------------------------------------------------------------------------
-    # 3. CONSOLIDACIÓN DE RESULTADOS GLOBALES Y MÉTRICAS
+    # 4. CONSOLIDACIÓN DE RESULTADOS GLOBALES Y MÉTRICAS
     # --------------------------------------------------------------------------
     - name: Consolidar metricas globales de la auditoria
       ansible.builtin.set_fact:
@@ -262,26 +392,26 @@
         total_no_vulnerables: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'estado_vulnerabilidad') | select('defined') | select('equalto', 'NO_VULNERABLE') | list | length) | int }}"
         total_no_aplica: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'estado_vulnerabilidad') | select('defined') | select('equalto', 'NO_APLICA') | list | length) | int }}"
         total_sin_conexion: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'estado_vulnerabilidad') | select('defined') | select('equalto', 'SIN_CONEXION') | list | length) | int }}"
-        total_indeterminados: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'estado_vulnerabilidad') | select('defined') | select('equalto', 'INDETERMINADO') | list | length) | int }}"
         total_con_php: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'php_instalado') | select('defined') | select('equalto', true) | list | length) | int }}"
+        total_con_contenedores_php: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'tiene_contenedores_php') | select('defined') | select('equalto', true) | list | length) | int }}"
       run_once: true
 
     - name: Mostrar resumen de la auditoria en logs
       ansible.builtin.debug:
         msg:
           - "================ RESUMEN AUDITORIA PHP (CERT-EU 2026-018) ================"
-          - "Total Servidores Evaluados : {{ total_evaluados }}"
-          - "Servidores con PHP         : {{ total_con_php }}"
-          - "Servidores VULNERABLES      : {{ total_vulnerables }}"
-          - "Servidores No Vulnerables   : {{ total_no_vulnerables }}"
-          - "Servidores Sin PHP (No Aplica): {{ total_no_aplica }}"
-          - "Servidores Sin Conexión    : {{ total_sin_conexion }}"
-          - "Indeterminados              : {{ total_indeterminados }}"
+          - "Total Servidores Evaluados      : {{ total_evaluados }}"
+          - "Servidores con PHP en Host      : {{ total_con_php }}"
+          - "Servidores con PHP Contenedores : {{ total_con_contenedores_php }}"
+          - "Servidores VULNERABLES          : {{ total_vulnerables }}"
+          - "Servidores No Vulnerables       : {{ total_no_vulnerables }}"
+          - "Servidores Sin PHP (No Aplica)  : {{ total_no_aplica }}"
+          - "Servidores Sin Conexión         : {{ total_sin_conexion }}"
           - "=========================================================================="
       run_once: true
 
     # --------------------------------------------------------------------------
-    # 4. ENVÍO DE REPORTE POR CORREO ELECTRÓNICO (SOLO TABLA EN CUERPO HTML)
+    # 5. ENVÍO DE REPORTE POR CORREO ELECTRÓNICO (SOLO TABLA EN CUERPO HTML)
     # --------------------------------------------------------------------------
     - name: Enviar correo institucional con tabla de auditoria
       become: false
@@ -302,8 +432,8 @@
         total_no_vulnerables: "{{ total_no_vulnerables }}"
         total_no_aplica: "{{ total_no_aplica }}"
         total_sin_conexion: "{{ total_sin_conexion }}"
-        total_indeterminados: "{{ total_indeterminados }}"
         total_con_php: "{{ total_con_php }}"
+        total_con_contenedores_php: "{{ total_con_contenedores_php }}"
       when:
         - email_to is defined
         - email_to | length > 0

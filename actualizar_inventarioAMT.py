@@ -442,7 +442,7 @@ def guardar_inventario_amt_ini(servidores: list, filename="INVENTARIO_AMT.ini"):
         f.write("ansible_port=5985\n")
         f.write("ansible_winrm_scheme=http\n")
         f.write("ansible_winrm_server_cert_validation=ignore\n")
-        f.write("ansible_winrm_transport=ntlm   # o kerberos / credssp\n")
+        f.write("ansible_winrm_transport=ntlm\n")
 
     print(f"Archivo '{filename}' escrito exitosamente.")
     print(f"Total: {total_unicos} servidores COD-SERV únicos en {len(clientes_dict)} clientes. Omitidos: {omitidos}")

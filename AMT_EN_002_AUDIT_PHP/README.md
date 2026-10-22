@@ -48,10 +48,11 @@ PlayBooks_AMT/
 
 | Condición Detectada | Estado en Reporte | Badge / Indicador | Dictamen / Acción |
 | :--- | :--- | :--- | :--- |
-| Sin binario de PHP | `NO_APLICA` | `NO (Sin PHP)` (Gris) | PHP no se encuentra instalado en el servidor (Sin riesgo). |
-| Versión PHP con parche aplicado | `NO_VULNERABLE` | `NO VULNERABLE` (Verde) | Cumple con la versión mínima segura indicada por CERT-EU 2026-018. |
-| PHP 8.2 a 8.5 sin parche | `VULNERABLE` | `VULNERABLE` (Rojo) | Expuesto a CVE-2026-109618 / CVE-2026-109619. Requiere actualización inmediata. |
-| PHP rama EOL (<= 8.1) | `VULNERABLE` | `VULNERABLE` (Rojo) | Versión descontinuada sin soporte oficial. Requiere migración de versión mayor. |
+| Sin binario de PHP | `NO_APLICA` | `NO (Sin PHP)` (Gris) | PHP no se encuentra instalado en el servidor ni en contenedores (Sin riesgo). |
+| Versión PHP con parche aplicado | `NO_VULNERABLE` | `NO VULNERABLE` (Verde) | Cumple con la versión mínima segura en host y contenedores (CERT-EU 2026-018). |
+| PHP 8.2 a 8.5 sin parche | `VULNERABLE` | `VULNERABLE` (Rojo) | Expuesto a CVE-2026-109618 / CVE-2026-109619 en host o contenedor. Requiere parche. |
+| PHP rama EOL (<= 8.1) | `VULNERABLE` | `VULNERABLE` (Rojo) | Versión descontinuada sin soporte en host o contenedor. Requiere actualización. |
+| Contenedor con PHP vulnerable | `VULNERABLE` | `VULNERABLE` (Rojo) | Host limpio pero contenedor Docker/Podman activo expuesto. Requiere parchar imagen. |
 | Falla SSH o WinRM | `SIN_CONEXION` | `SIN CONEXIÓN` (Naranja) | Error de conectividad al intentar evaluar el servidor. |
 
 ---

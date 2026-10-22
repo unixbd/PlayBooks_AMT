@@ -178,7 +178,7 @@
                     ansible_shell_type: powershell
                   timeout: 35
               rescue:
-                - name: Fallback con comando raw para servidores Windows legados (ej: PowerShell 2.0)
+                - name: "Fallback con comando raw para servidores Windows legados (PowerShell 2.0)"
                   ansible.builtin.raw: "cmd.exe /c echo pong"
                   vars:
                     ansible_connection: winrm

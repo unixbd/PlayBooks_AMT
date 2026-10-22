@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ titulo_reporte | default('Reporte de Auditoría PHP – AMT') }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    /* Resets seguros para clientes de correo (Outlook, Gmail, Apple Mail) */
+    body { margin:0; padding:0; background:#f7f7fb; color:#111827; line-height:1.5; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+    table { border-collapse:collapse; width:100%; mso-table-lspace:0pt; mso-table-rspace:0pt; border-spacing:0; }
+    img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
+    p { margin:0; padding:0; }
+    
+    /* Encabezados y celdas */
+    th {
+      text-align:center; text-transform:uppercase; letter-spacing:.02em; font-weight:700; font-size:11px;
+      background:#da291c; color:#ffffff; padding:10px 8px; border:1px solid #b11f16;
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    }
+    td {
+      padding:8px 10px; font-size:13px;
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    }
+    .muted { color:#6b7280; }
+    .badge-vuln { background:#fce8e6; color:#c5221f; font-weight:700; padding:4px 8px; border-radius:4px; display:inline-block; border:1px solid #fad2cf; font-size:11px; }
+    .badge-safe { background:#e6f4ea; color:#137333; font-weight:700; padding:4px 8px; border-radius:4px; display:inline-block; border:1px solid #ceead6; font-size:11px; }
+    .badge-na { background:#f1f3f4; color:#5f6368; font-weight:600; padding:4px 8px; border-radius:4px; display:inline-block; border:1px solid #dadce0; font-size:11px; }
+    .badge-warn { background:#fef7e0; color:#b06000; font-weight:700; padding:4px 8px; border-radius:4px; display:inline-block; border:1px solid #fce8b2; font-size:11px; }
+    
+    @media screen and (max-width:600px){
+      .container { width:100% !important; }
+      .p24 { padding:14px !important; }
+    }
+  </style>
+  <!--[if mso]><style>.mso-font{font-family:Arial,Helvetica,sans-serif !important;}</style><![endif]-->
+</head>
+<body>
+
+{# --- Variables de métricas precalculadas --- #}
+{% set total = (total_evaluados | default(0)) | int %}
+{% set vuln_count = (total_vulnerables | default(0)) | int %}
+{% set safe_count = (total_no_vulnerables | default(0)) | int %}
+{% set na_count = (total_no_aplica | default(0)) | int %}
+{% set unreach_count = (total_sin_conexion | default(0)) | int %}
+{% set php_count = (total_con_php | default(0)) | int %}
+
+<table role="presentation" width="100%">
+  <tr>
+    <td align="center" style="padding:15px 0;">
+
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="100%" class="container"
+             style="width:100%; max-width:960px; background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden;">
+
+        {# === Header institucional externo o fallback integrado === #}
+        {% if header_template is defined %}
+          {{ lookup('ansible.builtin.template', header_template) }}
+        {% elif header_file is defined %}
+          {{ lookup('ansible.builtin.file', header_file) | safe }}
+        {% else %}
+          <tr>
+            <td style="padding:0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#da291c;">
+                <tr>
+                  <td class="mso-font" valign="top" style="padding:20px 24px; color:#ffffff; width:70%; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                    <h1 style="margin:0; font-size:20px; font-weight:700; line-height:1.3;">{{ titulo_reporte | default('Auditoría de Vulnerabilidad PHP') }}</h1>
+                    <p style="margin:2px 0 0; font-size:14px; font-weight:600;">{{ actividad | default('Auditoría CERT-EU 2026-018 / CVE-2026-109618') }}</p>
+                    <p style="margin:6px 0 0; font-size:12px; opacity:0.95; line-height:1.5; color:#f3f4f6;">
+                      {{ subtitulo_reporte | default('Informe de seguridad generado automáticamente desde AWX / AMT') }}
+                    </p>
+                  </td>
+                  <td class="mso-font" valign="top" align="right" style="padding:20px 24px; color:#ffffff; font-size:12px; line-height:1.5; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; width:30%;">
+                    <p style="margin:0 0 2px 0;"><strong>JOB ID:</strong> {{ awx_job_id | default(tower_job_id) | default('N/D') }}</p>
+                    <p style="margin:0;"><small>{{ ansible_date_time.date | default(ansible_date_time.iso8601[:10] | default('')) }}</small></p>
+                    <p style="margin:0;"><small>{{ ansible_date_time.time | default('') }}</small></p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        {% endif %}
+
+        <!-- Cuerpo del mensaje -->
+        <tr>
+          <td class="p24" style="padding:24px;">
+            <p style="font-size:15px; margin-bottom:12px;">Cordial saludo,</p>
+            <p style="font-size:14px; margin-bottom:16px; color:#374151;">
+              Se comparte el resultado de la auditoría de seguridad automatizada sobre el inventario de servidores <strong>AMT (Linux y Windows)</strong>, evaluando la exposición ante el boletín oficial <strong><a href="https://cert.europa.eu/publications/security-advisories/2026-018/" target="_blank" style="color:#da291c; font-weight:bold; text-decoration:none;">CERT-EU 2026-018</a></strong> concerniente a vulnerabilidades críticas de Ejecución Remota de Código (RCE) en <strong>PHP (CVE-2026-109618 / CVE-2026-109619 - CVSS 9.2)</strong>.
+            </p>
+
+            <!-- Cuadros Resumen de Métricas (KPIs) -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+                   style="margin:16px 0 20px 0; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden; width:100%;">
+              <thead>
+                <tr>
+                  <th style="width:20%; background:#4b5563; border-color:#374151;">Total Evaluados</th>
+                  <th style="width:20%; background:#c5221f; border-color:#9f1614;">Vulnerables</th>
+                  <th style="width:20%; background:#137333; border-color:#0d5925;">No Vulnerables</th>
+                  <th style="width:20%; background:#5f6368; border-color:#3c4043;">No Aplica (Sin PHP)</th>
+                  <th style="width:20%; background:#e37400; border-color:#b06000;">Sin Conexión</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="background:#ffffff; font-size:15px; font-weight:700; text-align:center;">
+                  <td style="padding:14px 10px; border:1px solid #e5e7eb; color:#111827;">{{ total }}</td>
+                  <td style="padding:14px 10px; border:1px solid #e5e7eb; color:#c5221f;">
+                    {% if vuln_count > 0 %}
+                      <span class="badge-vuln" style="font-size:14px;">{{ vuln_count }} ALERTA</span>
+                    {% else %}
+                      <span class="badge-safe" style="font-size:14px;">0</span>
+                    {% endif %}
+                  </td>
+                  <td style="padding:14px 10px; border:1px solid #e5e7eb; color:#137333;">{{ safe_count }}</td>
+                  <td style="padding:14px 10px; border:1px solid #e5e7eb; color:#5f6368;">{{ na_count }}</td>
+                  <td style="padding:14px 10px; border:1px solid #e5e7eb; color:#e37400;">{{ unreach_count }}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- Callout de Alerta o Estado Óptimo -->
+            {% if vuln_count > 0 %}
+            <div style="background:#fef2f2; border-left:4px solid #da291c; padding:14px 16px; border-radius:4px; margin-bottom:20px;">
+              <p style="font-size:13px; color:#991b1b; line-height:1.5;">
+                <strong>ACCION REQUERIDA INMEDIATA:</strong> Se detectaron <strong>{{ vuln_count }}</strong> servidores con versiones vulnerables u obsoletas de PHP. Se recomienda aplicar los parches oficiales (PHP 8.2.35+, 8.3.36+, 8.4.27+, 8.5.12+) o coordinar la actualización de paquetes a la brevedad.
+              </p>
+            </div>
+            {% else %}
+            <div style="background:#f0fdf4; border-left:4px solid #16a34a; padding:14px 16px; border-radius:4px; margin-bottom:20px;">
+              <p style="font-size:13px; color:#166534; line-height:1.5;">
+                <strong>ESTADO SATISFACTORIO:</strong> No se detectaron servidores vulnerables a CVE-2026-109618 / CVE-2026-109619 en los servidores evaluados.
+              </p>
+            </div>
+            {% endif %}
+
+            <!-- Título de Tabla Detallada -->
+            <h3 style="font-size:14px; color:#1f2937; margin:20px 0 10px 0; text-transform:uppercase; letter-spacing:0.03em; border-bottom:2px solid #da291c; padding-bottom:4px;">
+              Detalle Individual por Servidor
+            </h3>
+
+            <!-- Tabla Principal de Resultados -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+                   style="margin:0 0 24px 0; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden; width:100%;">
+              <thead>
+                <tr>
+                  <th style="width:24%; text-align:left; padding-left:12px;">Nombre de la Máquina</th>
+                  <th style="width:22%; text-align:left; padding-left:12px;">Versión de SO</th>
+                  <th style="width:16%;">Versión PHP</th>
+                  <th style="width:18%;">¿Es Vulnerable?</th>
+                  <th style="width:20%; text-align:left; padding-left:10px;">Dictamen / Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for host in ansible_play_hosts_all %}
+                  {% set hvars = hostvars[host] | default({}) %}
+                  {% set st = hvars.estado_vulnerabilidad | default('SIN_CONEXION') %}
+                  {% set php_v = hvars.php_version | default('N/D') %}
+                  {% set so_desc = hvars.host_so_desc | default(hvars.tipo_so | default('N/D')) %}
+                  {% set ip_dest = hvars.ansible_host | default(host) %}
+                  {% set dictamen = hvars.detalle_dictamen | default('Sin información registrada') %}
+
+                  <tr style="background: {{ '#ffffff' if loop.index is odd else '#f9fafb' }};">
+                    <!-- Servidor / IP -->
+                    <td style="padding:10px 12px; border:1px solid #e5e7eb; font-weight:600; color:#111827;">
+                      {{ host }}
+                      {% if ip_dest != host %}
+                        <br><span style="font-size:11px; font-weight:normal; color:#6b7280;">IP: {{ ip_dest }}</span>
+                      {% endif %}
+                    </td>
+
+                    <!-- Versión de SO -->
+                    <td style="padding:10px 12px; border:1px solid #e5e7eb; font-size:12px; color:#374151;">
+                      {{ so_desc }}
+                    </td>
+
+                    <!-- Versión de PHP -->
+                    <td style="padding:10px 10px; border:1px solid #e5e7eb; text-align:center; font-size:12px; font-weight:600; color:#111827;">
+                      {% if php_v == 'No instalado' %}
+                        <span style="color:#6b7280; font-weight:normal;">No instalado</span>
+                      {% elif php_v == 'N/D' %}
+                        <span style="color:#9ca3af;">N/D</span>
+                      {% else %}
+                        <code>PHP {{ php_v }}</code>
+                      {% endif %}
+                    </td>
+
+                    <!-- ¿Es Vulnerable? -->
+                    <td style="padding:10px 10px; border:1px solid #e5e7eb; text-align:center;">
+                      {% if st == 'VULNERABLE' %}
+                        <span class="badge-vuln">VULNERABLE</span>
+                      {% elif st == 'NO_VULNERABLE' %}
+                        <span class="badge-safe">NO VULNERABLE</span>
+                      {% elif st == 'NO_APLICA' %}
+                        <span class="badge-na">NO APLICA</span>
+                      {% elif st == 'SIN_CONEXION' %}
+                        <span class="badge-warn">SIN CONEXIÓN</span>
+                      {% else %}
+                        <span class="badge-warn">{{ st }}</span>
+                      {% endif %}
+                    </td>
+
+                    <!-- Dictamen / Acción -->
+                    <td style="padding:10px 10px; border:1px solid #e5e7eb; font-size:11px; color:#4b5563; line-height:1.4;">
+                      {{ dictamen }}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+
+            <p style="margin-top:20px; font-size:14px; color:#4b5563;">Cordialmente,</p>
+          </td>
+        </tr>
+
+        {# === Footer externo o fallback integrado === #}
+        {% if footer_template is defined %}
+          {{ lookup('ansible.builtin.template', footer_template) }}
+        {% elif footer_file is defined %}
+          {{ lookup('ansible.builtin.file', footer_file) | safe }}
+        {% else %}
+          <tr>
+            <td class="mso-font" style="padding:20px 24px; background:#ffffff;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="left" style="margin-bottom:12px;">
+                <tr>
+                  {% if signature_b64 is defined and signature_b64 | length > 0 %}
+                  <td style="padding-right:12px;">
+                    <img src="data:image/gif;base64,{{ signature_b64 }}" width="200" height="100" alt="Firma Claro" style="display:block;" />
+                  </td>
+                  {% endif %}
+                  <td valign="middle" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                    <p style="margin:0; font-size:16px; font-weight:600; color:#333333;">{{ area_nombre | default('Área de Automatización y Middleware (AMT)') }}</p>
+                    <p style="margin:2px 0 0; font-size:13px; color:#6b7280;">Comunicación Celular S.A. Comcel S.A.</p>
+                  </td>
+                </tr>
+              </table>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr><td height="8" style="line-height:8px; font-size:8px;">&nbsp;</td></tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td class="mso-font" style="padding:20px 24px; background:#fbfbfe; border-top:1px solid #eef0f6; font-size:12px; color:#6b7280; text-align:justify;">
+              <b style="color:#6b7280;">AVISO DE CONFIDENCIALIDAD:</b>
+              <p style="margin:8px 0; line-height:1.6;">
+                Este correo electrónico, incluyendo en su caso los archivos adjuntos, puede contener información de carácter confidencial y/o privilegiada, y se envía a la atención única y exclusivamente de la persona y/o entidad a quien va dirigido. La copia, revisión, uso, revelación y/o distribución de dicha información confidencial sin la autorización por escrito de Comunicación Celular S.A. Comcel S.A. está prohibida. Si usted no es el destinatario de este correo, por favor contacte al remitente respondiendo a este mensaje y elimine el correo original y sus anexos, así como cualquier copia del mismo. Mediante la recepción del presente correo, usted reconoce y acepta que, en caso de incumplimiento de su parte y/o de sus representantes a los términos antes mencionados, Comunicación Celular S.A. Comcel S.A. tendrá derecho a reclamar los daños y perjuicios que ello le cause.
+              </p>
+              <b style="color:#6b7280;">CONFIDENTIALITY NOTICE:</b>
+              <p style="margin:8px 0; line-height:1.6;">
+                This e-mail message, including any attachments, is intended only for the person or entity to which it is addressed and may contain confidential and/or privileged material. Any review, use, disclosure, or distribution of such confidential information without the written authorization of Comunicación Celular S.A. Comcel S.A. is prohibited. If you are not the intended recipient, please contact the sender by reply e-mail and destroy all copies of the original message. By receiving this e-mail you acknowledge that any breach by you and/or your representatives of the above provisions may entitle Comunicación Celular S.A. Comcel S.A. to seek damages.
+              </p>
+            </td>
+          </tr>
+        {% endif %}
+
+      </table>
+    </td>
+  </tr>
+</table>
+
+</body>
+</html>

@@ -1,0 +1,323 @@
+---
+# ==============================================================================
+# Playbook: Auditoría de Vulnerabilidad PHP (CERT-EU 2026-018)
+# CVEs: CVE-2026-109618 (OOM RCE) y CVE-2026-109619 (Stale Global State RCE)
+# Proyecto: AMT_EN_002_AUDIT_PHP
+# Estandarizado con el lineamiento institucional de PlayBooks_AMT
+# ==============================================================================
+
+- name: Auditoría de Vulnerabilidad Crítica PHP - Servidores AMT
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: no
+  ignore_unreachable: true
+  vars:
+    # --------------------------------------------------------------------------
+    # Configuración de Servidor de Correo (Sobrescribible via Extra Vars en AWX)
+    # --------------------------------------------------------------------------
+    email_host: "{{ email_smtp_host | default('172.22.88.6') }}"
+    email_port: "{{ email_smtp_port | default(25) }}"
+    email_from: "{{ email_remitente | default('amt@telmexla.net.co') }}"
+    email_to: "{{ email_destinatarios | default('middletierdatacente@claro.com.co') }}"
+    email_cc: "{{ email_copia | default('') }}"
+    email_subject: "{{ email_asunto | default('Reporte de Auditoría - Vulnerabilidad Crítica PHP (CERT-EU 2026-018)') }}"
+
+    # --------------------------------------------------------------------------
+    # Metadatos del Reporte Institucional
+    # --------------------------------------------------------------------------
+    actividad: "AUDITORÍA DE VULNERABILIDAD PHP (CERT-EU 2026-018)"
+    titulo_reporte: "Reporte de Seguridad PHP"
+    subtitulo_reporte: "Auditoría de Versiones y Exposición a CVE-2026-109618 / CVE-2026-109619"
+    area_nombre: "Área de Automatización y Middleware (AMT)"
+
+    # Timeouts de conexión (segundos)
+    conn_timeout: "{{ connection_timeout | default(20) }}"
+    conn_connect_timeout: "{{ connect_timeout | default(10) }}"
+
+    # Recursos gráficos y plantillas institucionales
+    signature_b64: "{{ lookup('file', playbook_dir ~ '/../resources/img/FirmaClaro.gif', errors='ignore') | default('', true) | b64encode }}"
+    header_template: "{{ playbook_dir }}/../resources/templates/mail/header.html"
+    footer_template: "{{ playbook_dir }}/../resources/templates/mail/footer.html"
+
+  tasks:
+
+    # --------------------------------------------------------------------------
+    # 1. PREPARACIÓN INICIAL EN CONTROLADOR (LOCALHOST)
+    # --------------------------------------------------------------------------
+    - name: Capturar fecha y hora de ejecucion en localhost
+      ansible.builtin.setup:
+        filter:
+          - 'ansible_date_time'
+      delegate_to: localhost
+      run_once: true
+
+    # --------------------------------------------------------------------------
+    # 2. IDENTIFICACIÓN DE PLATAFORMA Y VALIDACIÓN DE CONECTIVIDAD
+    # --------------------------------------------------------------------------
+    - name: Determinar tipo de sistema operativo
+      ansible.builtin.set_fact:
+        tipo_so: "{{ 'Windows' if (ansible_connection | default('') == 'winrm' or 'windows_servers' in group_names) else 'Linux' }}"
+
+    - name: Bloque de auditoria por servidor
+      block:
+        # ======================================================================
+        # RAMA LINUX (SSH)
+        # ======================================================================
+        - name: Auditoria para servidores Linux
+          when: tipo_so == 'Linux'
+          block:
+            - name: Validar conectividad SSH preliminar
+              ansible.builtin.ping:
+              vars:
+                ansible_connection: ssh
+                ansible_user: "{{ linux_user_override | default(omit) }}"
+                ansible_password: "{{ linux_pass_override | default(omit) }}"
+                ansible_ssh_pass: "{{ linux_pass_override | default(omit) }}"
+                ansible_ssh_common_args: >-
+                  -o StrictHostKeyChecking=no
+                  -o UserKnownHostsFile=/dev/null
+                  -o ConnectTimeout={{ conn_connect_timeout }}
+              timeout: 30
+
+            - name: Obtener descripcion de Sistema Operativo Linux
+              ansible.builtin.shell: |
+                if [ -f /etc/os-release ]; then
+                  . /etc/os-release && echo "$PRETTY_NAME"
+                elif [ -f /etc/redhat-release ]; then
+                  cat /etc/redhat-release
+                elif [ -f /etc/system-release ]; then
+                  cat /etc/system-release
+                else
+                  uname -s -r
+                fi
+              register: linux_os_raw
+              changed_when: false
+              timeout: 15
+
+            - name: Buscar binario de PHP e inspeccionar version en Linux
+              ansible.builtin.shell: |
+                # Buscar binario en PATH y rutas comunes empresariales
+                PHP_BIN=$(command -v php 2>/dev/null || which php 2>/dev/null || true)
+                if [ -z "$PHP_BIN" ]; then
+                  for path in /usr/bin/php /usr/local/bin/php /opt/rh/rh-php*/root/usr/bin/php /opt/lampp/bin/php /usr/sbin/php-fpm; do
+                    if [ -x "$path" ]; then
+                      PHP_BIN="$path"
+                      break
+                    fi
+                  done
+                fi
+
+                if [ -n "$PHP_BIN" ] && [ -x "$PHP_BIN" ]; then
+                  OUTPUT=$("$PHP_BIN" -v 2>&1 | head -n 1)
+                  echo "INSTALADO|${PHP_BIN}|${OUTPUT}"
+                else
+                  echo "NO_INSTALADO||"
+                fi
+              register: linux_php_raw
+              changed_when: false
+              timeout: 20
+
+            - name: Parsear resultados de deteccion Linux
+              ansible.builtin.set_fact:
+                host_conectado: true
+                host_so_desc: "{{ linux_os_raw.stdout | default('Linux (Desconocido)') | trim }}"
+                php_status_line: "{{ linux_php_raw.stdout | default('NO_INSTALADO||') | trim }}"
+
+        # ======================================================================
+        # RAMA WINDOWS (WinRM / PowerShell)
+        # ======================================================================
+        - name: Auditoria para servidores Windows
+          when: tipo_so == 'Windows'
+          block:
+            - name: Validar conectividad WinRM preliminar
+              ansible.windows.win_ping:
+              vars:
+                ansible_connection: winrm
+                ansible_port: "{{ winrm_port | default(5985) }}"
+                ansible_winrm_scheme: "{{ winrm_scheme | default('http') }}"
+                ansible_winrm_server_cert_validation: ignore
+                ansible_winrm_transport: "{{ winrm_transport | default('ntlm') }}"
+                ansible_shell_type: powershell
+              timeout: 30
+
+            - name: Obtener SO y auditar PHP en Windows mediante PowerShell
+              ansible.windows.win_shell: |
+                $ErrorActionPreference = 'SilentlyContinue'
+                
+                # Obtener SO
+                $osInfo = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+                if (-not $osInfo) {
+                  $osInfo = Get-WmiObject Win32_OperatingSystem -ErrorAction SilentlyContinue
+                }
+                $osName = if ($osInfo) { "$($osInfo.Caption) ($($osInfo.Version))" } else { "Windows (Desconocido)" }
+
+                # Buscar binario php.exe
+                $phpCmd = Get-Command php.exe -ErrorAction SilentlyContinue
+                $phpPath = $null
+                if ($phpCmd) {
+                  $phpPath = $phpCmd.Source
+                } else {
+                  $commonPaths = @(
+                    "C:\php\php.exe",
+                    "C:\xampp\php\php.exe",
+                    "C:\tools\php\php.exe",
+                    "C:\Program Files\PHP\php.exe",
+                    "C:\Program Files (x86)\PHP\php.exe"
+                  )
+                  foreach ($p in $commonPaths) {
+                    if (Test-Path $p) {
+                      $phpPath = $p
+                      break
+                    }
+                  }
+                }
+
+                if ($phpPath) {
+                  $firstLine = (& $phpPath -v | Select-Object -First 1)
+                  Write-Output "SO:$osName|PHP:INSTALADO|$phpPath|$firstLine"
+                } else {
+                  Write-Output "SO:$osName|PHP:NO_INSTALADO||"
+                }
+              vars:
+                ansible_connection: winrm
+                ansible_shell_type: powershell
+              register: win_audit_raw
+              changed_when: false
+              timeout: 30
+
+            - name: Parsear resultados de deteccion Windows
+              ansible.builtin.set_fact:
+                host_conectado: true
+                host_so_desc: "{{ (win_audit_raw.stdout_lines[0].split('|')[0] | regex_replace('^SO:', '')) if (win_audit_raw.stdout_lines is defined and win_audit_raw.stdout_lines | length > 0 and 'SO:' in win_audit_raw.stdout_lines[0]) else 'Windows Server' }}"
+                php_status_line: "{{ (win_audit_raw.stdout_lines[0].split('|')[1:] | join('|') | regex_replace('^PHP:', '')) if (win_audit_raw.stdout_lines is defined and win_audit_raw.stdout_lines | length > 0) else 'NO_INSTALADO||' }}"
+
+        # ======================================================================
+        # EVALUACIÓN DE VULNERABILIDAD SEGÚN CERT-EU 2026-018
+        # ======================================================================
+        - name: Procesar version de PHP y evaluar estado de vulnerabilidad
+          ansible.builtin.set_fact:
+            php_instalado: "{{ ('INSTALADO' in php_status_line) }}"
+            php_ruta: "{{ (php_status_line.split('|')[1] | default('')) if ('INSTALADO' in php_status_line) else 'N/A' }}"
+            php_version_raw: "{{ (php_status_line.split('|')[2] | default('')) if ('INSTALADO' in php_status_line) else '' }}"
+
+        - name: Extraer numero de version semantica de PHP
+          ansible.builtin.set_fact:
+            php_version: "{{ (php_version_raw | regex_search('PHP\\s+([0-9]+\\.[0-9]+\\.[0-9]+)', '\\1'))[0] | default('Desconocida') if php_instalado else 'No instalado' }}"
+
+        - name: Clasificar estado segun umbrales CERT-EU 2026-018
+          ansible.builtin.set_fact:
+            estado_vulnerabilidad: >-
+              {{
+                'NO_APLICA' if (not php_instalado)
+                else (
+                  'INDETERMINADO' if (php_version == 'Desconocida')
+                  else (
+                    'NO_VULNERABLE' if (
+                      (php_version is version('8.5.12', '>=')) or
+                      (php_version is version('8.4.27', '>=') and php_version is version('8.5.0', '<')) or
+                      (php_version is version('8.3.36', '>=') and php_version is version('8.4.0', '<')) or
+                      (php_version is version('8.2.35', '>=') and php_version is version('8.3.0', '<'))
+                    )
+                    else 'VULNERABLE'
+                  )
+                )
+              }}
+            detalle_dictamen: >-
+              {{
+                'Servidor sin PHP instalado' if (not php_instalado)
+                else (
+                  'No fue posible determinar la versión exacta de PHP' if (php_version == 'Desconocida')
+                  else (
+                    'Versión segura con parche aplicado (CERT-EU 2026-018)' if (
+                      (php_version is version('8.5.12', '>=')) or
+                      (php_version is version('8.4.27', '>=') and php_version is version('8.5.0', '<')) or
+                      (php_version is version('8.3.36', '>=') and php_version is version('8.4.0', '<')) or
+                      (php_version is version('8.2.35', '>=') and php_version is version('8.3.0', '<'))
+                    )
+                    else (
+                      'VULNERABLE (CVE-2026-109618 / CVE-2026-109619) - Requiere parche inmediato' if (php_version is version('8.2.0', '>='))
+                      else 'CRÍTICO: Rama EOL descontinuada (' ~ php_version ~ ') vulnerable sin soporte. Requiere actualización mayor.'
+                    )
+                  )
+                )
+              }}
+
+      rescue:
+        - name: Capturar host fallido / sin conexion
+          ansible.builtin.set_fact:
+            host_conectado: false
+            host_so_desc: "{{ tipo_so }} (Sin Conexión)"
+            php_instalado: false
+            php_version: "N/D"
+            php_ruta: "N/D"
+            estado_vulnerabilidad: "SIN_CONEXION"
+            detalle_dictamen: "Error de conectividad SSH / WinRM al evaluar el servidor"
+
+    # --------------------------------------------------------------------------
+    # 3. CONSOLIDACIÓN DE RESULTADOS GLOBALES Y MÉTRICAS
+    # --------------------------------------------------------------------------
+    - name: Consolidar metricas globales de la auditoria
+      ansible.builtin.set_fact:
+        total_evaluados: "{{ ansible_play_hosts_all | length | int }}"
+        total_vulnerables: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'estado_vulnerabilidad') | select('defined') | select('equalto', 'VULNERABLE') | list | length) | int }}"
+        total_no_vulnerables: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'estado_vulnerabilidad') | select('defined') | select('equalto', 'NO_VULNERABLE') | list | length) | int }}"
+        total_no_aplica: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'estado_vulnerabilidad') | select('defined') | select('equalto', 'NO_APLICA') | list | length) | int }}"
+        total_sin_conexion: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'estado_vulnerabilidad') | select('defined') | select('equalto', 'SIN_CONEXION') | list | length) | int }}"
+        total_indeterminados: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'estado_vulnerabilidad') | select('defined') | select('equalto', 'INDETERMINADO') | list | length) | int }}"
+        total_con_php: "{{ (ansible_play_hosts_all | map('extract', hostvars, 'php_instalado') | select('defined') | select('equalto', true) | list | length) | int }}"
+      run_once: true
+
+    - name: Mostrar resumen de la auditoria en logs
+      ansible.builtin.debug:
+        msg:
+          - "================ RESUMEN AUDITORIA PHP (CERT-EU 2026-018) ================"
+          - "Total Servidores Evaluados : {{ total_evaluados }}"
+          - "Servidores con PHP         : {{ total_con_php }}"
+          - "Servidores VULNERABLES      : {{ total_vulnerables }}"
+          - "Servidores No Vulnerables   : {{ total_no_vulnerables }}"
+          - "Servidores Sin PHP (No Aplica): {{ total_no_aplica }}"
+          - "Servidores Sin Conexión    : {{ total_sin_conexion }}"
+          - "Indeterminados              : {{ total_indeterminados }}"
+          - "=========================================================================="
+      run_once: true
+
+    # --------------------------------------------------------------------------
+    # 4. ENVÍO DE REPORTE POR CORREO ELECTRÓNICO (SOLO TABLA EN CUERPO HTML)
+    # --------------------------------------------------------------------------
+    - name: Enviar correo institucional con tabla de auditoria
+      become: false
+      community.general.mail:
+        host: "{{ email_host }}"
+        port: "{{ email_port }}"
+        subject: "{{ email_subject }}"
+        subtype: html
+        body: "{{ lookup('ansible.builtin.template', 'email_template.j2') }}"
+        from: "{{ email_from }}"
+        to: "{{ email_to }}"
+        cc: "{{ email_cc if (email_cc is defined and email_cc | length > 0) else omit }}"
+      delegate_to: localhost
+      run_once: true
+      vars:
+        total_evaluados: "{{ total_evaluados }}"
+        total_vulnerables: "{{ total_vulnerables }}"
+        total_no_vulnerables: "{{ total_no_vulnerables }}"
+        total_no_aplica: "{{ total_no_aplica }}"
+        total_sin_conexion: "{{ total_sin_conexion }}"
+        total_indeterminados: "{{ total_indeterminados }}"
+        total_con_php: "{{ total_con_php }}"
+      when:
+        - email_to is defined
+        - email_to | length > 0
+        - enviar_correo | default(true) | bool
+      ignore_errors: true
+      register: envio_correo_result
+
+    - name: Notificar estado del envio de correo
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'Correo de auditoría enviado exitosamente a ' ~ email_to
+            if (envio_correo_result is defined and envio_correo_result is not failed)
+            else 'Aviso: No se pudo enviar el correo o envio_correo está desactivado (' ~ (envio_correo_result.msg | default('Sin detalles')) ~ ')'
+          }}
+      delegate_to: localhost
+      run_once: true

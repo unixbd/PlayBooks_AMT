@@ -98,7 +98,7 @@
                 # Buscar binario en PATH y rutas comunes empresariales
                 PHP_BIN=$(command -v php 2>/dev/null || which php 2>/dev/null || true)
                 if [ -z "$PHP_BIN" ]; then
-                  for path in /usr/bin/php /usr/local/bin/php /opt/rh/rh-php*/root/usr/bin/php /opt/lampp/bin/php /usr/sbin/php-fpm; do
+                  for path in /usr/bin/php /etc/alternatives/php /usr/bin/php[5-9]* /usr/local/bin/php /opt/rh/rh-php*/root/usr/bin/php /opt/lampp/bin/php /usr/sbin/php-fpm*; do
                     if [ -x "$path" ]; then
                       PHP_BIN="$path"
                       break
@@ -223,7 +223,7 @@
               }}
             detalle_dictamen: >-
               {{
-                'Servidor sin PHP instalado' if (not php_instalado)
+                'PHP no se encuentra instalado en el servidor (Sin riesgo)' if (not php_instalado)
                 else (
                   'No fue posible determinar la versión exacta de PHP' if (php_version == 'Desconocida')
                   else (

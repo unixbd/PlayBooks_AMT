@@ -48,7 +48,7 @@ PlayBooks_AMT/
 
 | Condición Detectada | Estado en Reporte | Badge / Indicador | Dictamen / Acción |
 | :--- | :--- | :--- | :--- |
-| Sin binario de PHP | `NO_APLICA` | `NO APLICA` (Gris) | Servidor sin PHP instalado. Sin riesgo para esta vulnerabilidad. |
+| Sin binario de PHP | `NO_APLICA` | `NO (Sin PHP)` (Gris) | PHP no se encuentra instalado en el servidor (Sin riesgo). |
 | Versión PHP con parche aplicado | `NO_VULNERABLE` | `NO VULNERABLE` (Verde) | Cumple con la versión mínima segura indicada por CERT-EU 2026-018. |
 | PHP 8.2 a 8.5 sin parche | `VULNERABLE` | `VULNERABLE` (Rojo) | Expuesto a CVE-2026-109618 / CVE-2026-109619. Requiere actualización inmediata. |
 | PHP rama EOL (<= 8.1) | `VULNERABLE` | `VULNERABLE` (Rojo) | Versión descontinuada sin soporte oficial. Requiere migración de versión mayor. |

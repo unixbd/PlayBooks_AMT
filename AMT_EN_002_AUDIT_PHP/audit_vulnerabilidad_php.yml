@@ -169,7 +169,7 @@
             PHP_INFO="NO_INSTALADO||"
             if [ -n "$PHP_BIN" ] && [ -x "$PHP_BIN" ]; then
               PHP_OUT=$("$PHP_BIN" -v 2>&1 | head -n 1)
-              PHP_INFO="INSTALADO|${PHP_BIN}|${PHP_OUT}"
+              PHP_INFO="SI_INSTALADO|${PHP_BIN}|${PHP_OUT}"
             fi
 
             # 3. PHP en Contenedores (Docker / Podman seguro con timeout)
@@ -263,7 +263,7 @@
 
             $phpLine = if ($phpPath) {
               $v = (& $phpPath -v | Select-Object -First 1)
-              "INSTALADO|$phpPath|$v"
+              "SI_INSTALADO|$phpPath|$v"
             } else {
               "NO_INSTALADO||"
             }
@@ -320,7 +320,7 @@
         - name: Parsear resultado de fallback CMD en Windows
           ansible.builtin.set_fact:
             host_so_desc: "{{ (win_raw_fallback.stdout_lines | select('search', 'Microsoft Windows') | list | first) | default('Windows Server (Legacy PS 2.0)') }}"
-            php_status_line: "{{ 'INSTALADO|' ~ (win_raw_fallback.stdout_lines | select('search', 'php.exe') | list | first) ~ '|PHP' if (win_raw_fallback.stdout_lines is defined and win_raw_fallback.stdout_lines | select('search', 'php.exe') | list | length > 0) else 'NO_INSTALADO||' }}"
+            php_status_line: "{{ 'SI_INSTALADO|' ~ (win_raw_fallback.stdout_lines | select('search', 'php.exe') | list | first) ~ '|PHP' if (win_raw_fallback.stdout_lines is defined and win_raw_fallback.stdout_lines | select('search', 'php.exe') | list | length > 0) else 'NO_INSTALADO||' }}"
             containers_php_raw: "NINGUNO"
 
     # --------------------------------------------------------------------------
@@ -329,9 +329,9 @@
     - name: Procesar version de PHP en Host
       when: host_conectado | bool
       ansible.builtin.set_fact:
-        php_instalado: "{{ ('INSTALADO' in (php_status_line | default(''))) }}"
-        php_ruta: "{{ (php_status_line.split('|')[1] | default('N/A')) if ('INSTALADO' in (php_status_line | default(''))) else 'N/A' }}"
-        php_version_raw: "{{ (php_status_line.split('|')[2] | default('')) if ('INSTALADO' in (php_status_line | default(''))) else '' }}"
+        php_instalado: "{{ (php_status_line | default('')).split('|')[0] == 'SI_INSTALADO' }}"
+        php_ruta: "{{ (php_status_line.split('|')[1] | default('N/A')) if (php_status_line | default('')).split('|')[0] == 'SI_INSTALADO' else 'N/A' }}"
+        php_version_raw: "{{ (php_status_line.split('|')[2] | default('')) if (php_status_line | default('')).split('|')[0] == 'SI_INSTALADO' else '' }}"
 
     - name: Extraer numero de version semantica de PHP en Host
       when: host_conectado | bool
@@ -385,9 +385,12 @@
                   (php_version is version('8.2.35', '>=') and php_version is version('8.3.0', '<'))
                 )
               )
-              else true
+              else (
+                false if php_version == 'Desconocida' else true
+              )
             )
           }}
+        host_version_desconocida: "{{ php_instalado and php_version == 'Desconocida' }}"
 
     - name: Consolidar estado final del servidor
       when: host_conectado | bool
@@ -396,8 +399,11 @@
           {{
             'VULNERABLE' if (host_es_vulnerable or contenedor_php_vuln)
             else (
-              'NO_VULNERABLE' if (php_instalado or tiene_contenedores_php)
-              else 'NO_APLICA'
+              'REVISION_MANUAL' if host_version_desconocida
+              else (
+                'NO_VULNERABLE' if (php_instalado or tiene_contenedores_php)
+                else 'NO_APLICA'
+              )
             )
           }}
         detalle_dictamen: >-
@@ -409,12 +415,16 @@
                 'CRÍTICO: Contenedor vulnerable detectado: ' ~ contenedores_php_desc
                 if contenedor_php_vuln
                 else (
-                  'CRÍTICO: Vulnerable en Host (' ~ php_version ~ ') - CVE-2026-109618/19'
+                  'CRÍTICO: Versión vulnerable en Host (PHP ' ~ php_version ~ ') - CVE-2026-109618/19'
                   if host_es_vulnerable
                   else (
-                    'Versión segura con parche aplicado (Host: ' ~ php_version ~ (', Contenedores: ' ~ contenedores_php_desc if tiene_contenedores_php else '') ~ ')'
-                    if (php_instalado or tiene_contenedores_php)
-                    else 'PHP no se encuentra instalado en el servidor ni en contenedores (Sin riesgo)'
+                    'ADVERTENCIA: PHP instalado (' ~ php_ruta ~ ') con versión no identificada. Requiere revisión manual.'
+                    if host_version_desconocida
+                    else (
+                      'Versión segura con parche aplicado (Host: PHP ' ~ php_version ~ (', Contenedores: ' ~ contenedores_php_desc if tiene_contenedores_php else '') ~ ')'
+                      if (php_instalado or tiene_contenedores_php)
+                      else 'PHP no se encuentra instalado en el servidor ni en contenedores (Sin riesgo)'
+                    )
                   )
                 )
               )

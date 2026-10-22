@@ -96,7 +96,7 @@
                   <th style="width:20%; background:#4b5563; border-color:#374151;">Total Evaluados</th>
                   <th style="width:20%; background:#c5221f; border-color:#9f1614;">Vulnerables</th>
                   <th style="width:20%; background:#137333; border-color:#0d5925;">No Vulnerables</th>
-                  <th style="width:20%; background:#5f6368; border-color:#3c4043;">Sin PHP Instalado</th>
+                  <th style="width:20%; background:#2e7d32; border-color:#1b5e20;">Sin PHP (N/A)</th>
                   <th style="width:20%; background:#e37400; border-color:#b06000;">Sin Conexión</th>
                 </tr>
               </thead>
@@ -111,7 +111,7 @@
                     {% endif %}
                   </td>
                   <td style="padding:14px 10px; border:1px solid #e5e7eb; color:#137333;">{{ safe_count }}</td>
-                  <td style="padding:14px 10px; border:1px solid #e5e7eb; color:#5f6368;">{{ na_count }}</td>
+                  <td style="padding:14px 10px; border:1px solid #e5e7eb; color:#2e7d32;">{{ na_count }}</td>
                   <td style="padding:14px 10px; border:1px solid #e5e7eb; color:#e37400;">{{ unreach_count }}</td>
                 </tr>
               </tbody>
@@ -177,6 +177,8 @@
                     <td style="padding:10px 8px; border:1px solid #e5e7eb; text-align:center; font-size:12px; font-weight:600; color:#111827;">
                       {% if php_v == 'No instalado' %}
                         <span style="background:#f3f4f6; color:#4b5563; border:1px solid #d1d5db; border-radius:4px; padding:3px 8px; font-size:11px; font-weight:600; display:inline-block;">No instalado</span>
+                      {% elif php_v == 'Desconocida' %}
+                        <span style="background:#fef3c7; color:#92400e; border:1px solid #fcd34d; border-radius:4px; padding:3px 8px; font-size:11px; font-weight:600; display:inline-block;">Desconocida</span>
                       {% elif php_v == 'N/D' %}
                         <span style="color:#9ca3af;">N/D</span>
                       {% else %}
@@ -203,7 +205,9 @@
                       {% elif st == 'NO_VULNERABLE' %}
                         <span class="badge-safe">NO VULNERABLE</span>
                       {% elif st == 'NO_APLICA' %}
-                        <span class="badge-na" style="background:#f9fafb; color:#4b5563; border:1px solid #d1d5db;">NO (Sin PHP)</span>
+                        <span class="badge-safe" style="background:#e6f4ea; color:#137333; border:1px solid #ceead6; font-weight:700; padding:4px 8px; border-radius:4px; display:inline-block; font-size:11px;">N/A (Sin PHP)</span>
+                      {% elif st == 'REVISION_MANUAL' %}
+                        <span class="badge-warn" style="background:#fef7e0; color:#b06000; border:1px solid #fce8b2; font-weight:700; padding:4px 8px; border-radius:4px; display:inline-block; font-size:11px;">REVISIÓN MANUAL</span>
                       {% elif st == 'SIN_CONEXION' %}
                         <span class="badge-warn">SIN CONEXIÓN</span>
                       {% else %}

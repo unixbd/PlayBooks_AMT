@@ -34,8 +34,8 @@
     conn_timeout: "{{ connection_timeout | default(20) }}"
     conn_connect_timeout: "{{ connect_timeout | default(10) }}"
 
-    # Sanitización de variables de transporte WinRM (evita comentarios del inventario)
-    winrm_transport_clean: "{{ (winrm_transport | default(ansible_winrm_transport | default('ntlm'))) | regex_replace('\\s*#.*$', '') | trim }}"
+    # Transporte WinRM limpio (sin bucles de recursión)
+    winrm_transport_clean: "{{ (winrm_transport | default('ntlm')) | regex_replace('\\s*#.*$', '') | trim }}"
 
     # Recursos gráficos y plantillas institucionales
     signature_b64: "{{ lookup('file', playbook_dir ~ '/../resources/img/FirmaClaro.gif', errors='ignore') | default('', true) | b64encode }}"
@@ -142,6 +142,7 @@
       block:
         - name: Ejecutar inspeccion completa en Linux (SO, PHP y Contenedores)
           ansible.builtin.shell: |
+            {% raw %}
             # 1. Sistema Operativo
             OS_DESC="Linux"
             if [ -f /etc/os-release ]; then
@@ -174,7 +175,6 @@
             # 3. PHP en Contenedores (Docker / Podman seguro con timeout)
             CONT_INFO=""
             if command -v docker >/dev/null 2>&1; then
-              # Timeout para evitar bloqueos si el daemon no responde
               D_IDS=$(timeout 5 docker ps -q 2>/dev/null || true)
               for cid in $D_IDS; do
                 cphp=$(timeout 5 docker exec "$cid" php -v 2>/dev/null | head -n 1 || true)
@@ -199,6 +199,7 @@
             fi
 
             echo "SO:${OS_DESC}|PHP:${PHP_INFO}|CONT:${CONT_INFO:-NINGUNO}"
+            {% endraw %}
           vars:
             ansible_connection: ssh
             ansible_user: "{{ linux_user_override | default(omit) }}"
@@ -229,6 +230,7 @@
       block:
         - name: Auditoria en Windows con PowerShell
           ansible.windows.win_shell: |
+            {% raw %}
             $ErrorActionPreference = 'SilentlyContinue'
 
             # 1. SO
@@ -284,6 +286,7 @@
             if (-not $cAudit) { $cAudit = "NINGUNO" }
 
             Write-Output "SO:$osName|PHP:$phpLine|CONT:$cAudit"
+            {% endraw %}
           vars:
             ansible_connection: winrm
             ansible_port: "{{ winrm_port | default(5985) }}"
@@ -337,10 +340,9 @@
           {{
             'No instalado' if (not php_instalado)
             else (
-              (php_version_raw | regex_search('PHP\s+([0-9]+(?:\.[0-9]+)+)', '\1'))
-              | default(['Desconocida'])
-              | first
-              | default('Desconocida')
+              (php_version_raw | regex_replace('^.*?PHP\s+([0-9]+(?:\.[0-9]+)+).*$', '\1'))
+              if ('PHP' in (php_version_raw | default('')) and (php_version_raw | regex_search('[0-9]')))
+              else 'Desconocida'
             )
           }}
 

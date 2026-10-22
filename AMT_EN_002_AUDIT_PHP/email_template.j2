@@ -50,7 +50,7 @@
 
       <table role="presentation" cellpadding="0" cellspacing="0" border="0"
              width="100%" class="container"
-             style="width:100%; max-width:960px; background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden;">
+             style="width:100%; max-width:1040px; background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden;">
 
         {# === Header institucional externo o fallback integrado === #}
         {% if header_template is defined %}
@@ -142,11 +142,12 @@
                    style="margin:0 0 24px 0; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden; width:100%;">
               <thead>
                 <tr>
-                  <th style="width:24%; text-align:left; padding-left:12px;">Nombre de la Máquina</th>
-                  <th style="width:22%; text-align:left; padding-left:12px;">Versión de SO</th>
-                  <th style="width:16%;">Versión PHP</th>
-                  <th style="width:18%;">¿Es Vulnerable?</th>
-                  <th style="width:20%; text-align:left; padding-left:10px;">Dictamen / Acción</th>
+                  <th style="width:18%; text-align:left; padding-left:10px;">Nombre de la Máquina</th>
+                  <th style="width:17%; text-align:left; padding-left:10px;">Versión de SO</th>
+                  <th style="width:13%;">PHP en Host</th>
+                  <th style="width:20%; text-align:left; padding-left:10px;">Contenedor con PHP</th>
+                  <th style="width:14%;">¿Es Vulnerable?</th>
+                  <th style="width:18%; text-align:left; padding-left:10px;">Dictamen / Acción</th>
                 </tr>
               </thead>
               <tbody>
@@ -160,7 +161,7 @@
 
                   <tr style="background: {{ '#ffffff' if loop.index is odd else '#f9fafb' }};">
                     <!-- Servidor / IP -->
-                    <td style="padding:10px 12px; border:1px solid #e5e7eb; font-weight:600; color:#111827;">
+                    <td style="padding:10px 10px; border:1px solid #e5e7eb; font-weight:600; color:#111827;">
                       {{ host }}
                       {% if ip_dest != host %}
                         <br><span style="font-size:11px; font-weight:normal; color:#6b7280;">IP: {{ ip_dest }}</span>
@@ -168,12 +169,12 @@
                     </td>
 
                     <!-- Versión de SO -->
-                    <td style="padding:10px 12px; border:1px solid #e5e7eb; font-size:12px; color:#374151;">
+                    <td style="padding:10px 10px; border:1px solid #e5e7eb; font-size:12px; color:#374151;">
                       {{ so_desc }}
                     </td>
 
-                    <!-- Versión de PHP (Host y Contenedores) -->
-                    <td style="padding:10px 10px; border:1px solid #e5e7eb; text-align:center; font-size:12px; font-weight:600; color:#111827;">
+                    <!-- Versión de PHP en Host -->
+                    <td style="padding:10px 8px; border:1px solid #e5e7eb; text-align:center; font-size:12px; font-weight:600; color:#111827;">
                       {% if php_v == 'No instalado' %}
                         <span style="background:#f3f4f6; color:#4b5563; border:1px solid #d1d5db; border-radius:4px; padding:3px 8px; font-size:11px; font-weight:600; display:inline-block;">No instalado</span>
                       {% elif php_v == 'N/D' %}
@@ -181,15 +182,22 @@
                       {% else %}
                         <code style="background:#eef2ff; color:#3730a3; padding:2px 6px; border-radius:4px; font-size:12px; font-weight:bold;">PHP {{ php_v }}</code>
                       {% endif %}
+                    </td>
+
+                    <!-- Contenedor con PHP -->
+                    <td style="padding:10px 10px; border:1px solid #e5e7eb; font-size:11px; color:#111827;">
                       {% if hvars.tiene_contenedores_php is defined and hvars.tiene_contenedores_php %}
-                        <div style="margin-top:6px; font-size:10px; text-align:left; background:#eff6ff; border:1px solid #bfdbfe; border-radius:4px; padding:4px 6px; color:#1e40af; line-height:1.3;">
-                          <strong>🐳 Contenedor:</strong> {{ hvars.contenedores_php_desc }}
+                        <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:4px; padding:6px 8px; color:#1e40af; line-height:1.4;">
+                          <strong>🐳 Contenedor:</strong><br>
+                          {{ hvars.contenedores_php_desc }}
                         </div>
+                      {% else %}
+                        <span style="color:#9ca3af; font-size:11px;">Ninguno</span>
                       {% endif %}
                     </td>
 
                     <!-- ¿Es Vulnerable? -->
-                    <td style="padding:10px 10px; border:1px solid #e5e7eb; text-align:center;">
+                    <td style="padding:10px 8px; border:1px solid #e5e7eb; text-align:center;">
                       {% if st == 'VULNERABLE' %}
                         <span class="badge-vuln">VULNERABLE</span>
                       {% elif st == 'NO_VULNERABLE' %}
